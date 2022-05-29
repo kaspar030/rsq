@@ -1,0 +1,24 @@
+use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc::UnboundedSender;
+
+use super::msg::Msg;
+
+pub type PeerHandle = UnboundedSender<Msg>;
+
+#[derive(PartialEq, Eq, Clone, Debug, Hash, Serialize, Deserialize)]
+pub struct PeerId {
+    id: String,
+}
+
+impl PeerId {
+    pub fn new(id: &str) -> PeerId {
+        PeerId { id: id.to_string() }
+    }
+}
+
+pub trait Peer {
+    fn get_id(&self) -> &PeerId;
+    fn get_sink(&self) -> &PeerHandle;
+}
+
+unsafe impl Send for PeerId {}
