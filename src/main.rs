@@ -1,31 +1,7 @@
-//! A chat server that broadcasts a message to all connections.
+//! A message broker in Rust.
 //!
-//! This example is explicitly more verbose than it has to be. This is to
-//! illustrate more concepts.
-//!
-//! A chat server for telnet clients. After a telnet client connects, the first
-//! line should contain the client's name. After that, all lines sent by a
-//! client are broadcasted to all other connected clients.
-//!
-//! Because the client is telnet, lines are delimited by "\r\n".
-//!
-//! You can test this out by running:
-//!
-//!     cargo run --example chat
-//!
-//! And then in another terminal run:
-//!
-//!     telnet localhost 6142
-//!
-//! You can run the `telnet` command in any number of additional windows.
-//!
-//! You can run the second command in multiple windows and then chat between the
-//! two, seeing the messages from the other client as they're received. For all
-//! connected clients they'll all join the same room and see everyone else's
-//! messages.
 
-#![warn(rust_2018_idioms)]
-
+use fdlimit::raise_fd_limit;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, Mutex};
 use tokio_serde_cbor::Codec;
@@ -38,6 +14,7 @@ use std::env;
 use std::error::Error;
 use std::io;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use rsq::messaging::msg::{ControlMsg, Msg};
@@ -46,6 +23,8 @@ use rsq::messaging::router::Router;
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+static OPEN_CONNECTIONS: AtomicU64 = AtomicU64::new(0);
 
 //// counting allocator
 // use std::alloc::{GlobalAlloc, Layout, System};
@@ -81,8 +60,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter};
-    // Configure a `tracing` subscriber that logs traces emitted by the chat
-    // server.
+    // Configure a `tracing` subscriber
     tracing_subscriber::fmt()
         // Filter what traces are displayed based on the RUST_LOG environment
         // variable.
@@ -100,7 +78,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         // the program.
         .init();
 
-    // Create the shared state. This is how all the peers communicate.
+    // Create the shared state.
     //
     // The server task will hold a handle to this. For every new client, the
     // `state` handle is cloned and passed into the task that processes the
@@ -111,17 +89,31 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .nth(1)
         .unwrap_or_else(|| "127.0.0.1:6142".to_string());
 
+    // figure out possible number of connections
+    let max_connections = if let Some(max) = raise_fd_limit() {
+        max - 64
+    } else {
+        512
+    };
+
     // Bind a TCP listener to the socket address.
-    //
-    // Note that this is the Tokio TcpListener, which is fully async.
     let listener = TcpListener::bind(&addr).await?;
 
     tracing::info!("server running on {}", addr);
+    tracing::info!("server accepting up to {} connections", max_connections);
+
     // std::thread::spawn(|| loop {
     //     std::thread::sleep(Duration::from_secs(1));
     //     println!("Current memory: {}", A.count.load(Ordering::Relaxed));
     // });
     loop {
+        while OPEN_CONNECTIONS.load(Ordering::Relaxed) >= max_connections {
+            use tokio::time::{sleep, Duration};
+
+            tracing::info!("connection limit ({}) reached", max_connections);
+            sleep(Duration::from_secs(1)).await;
+        }
+
         // Asynchronously wait for an inbound TcpStream.
         let (stream, addr) = listener.accept().await?;
 
@@ -131,9 +123,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
         // Spawn our handler to be run asynchronously.
         tokio::spawn(async move {
             tracing::debug!("accepted connection");
+            OPEN_CONNECTIONS.fetch_add(1, Ordering::Relaxed);
             if let Err(e) = process(state, stream, addr).await {
                 tracing::info!("an error occurred; error = {:?}", e);
             }
+            OPEN_CONNECTIONS.fetch_sub(1, Ordering::Relaxed);
         });
     }
 }
@@ -144,12 +138,7 @@ type Tx = mpsc::UnboundedSender<Msg>;
 /// Shorthand for the receive half of the message channel.
 type Rx = mpsc::UnboundedReceiver<Msg>;
 
-/// Data that is shared between all peers in the chat server.
-///
-/// This is the set of `Tx` handles for all connected clients. Whenever a
-/// message is received from a client, it is broadcasted to all peers by
-/// iterating over the `peers` entries and sending a copy of the message on each
-/// `Tx`.
+/// Data that is shared between all client connections
 struct Shared {
     connections: HashMap<SocketAddr, Tx>,
     router: Router,
@@ -158,7 +147,6 @@ struct Shared {
 /// The state for each connected client.
 struct Connection {
     /// The TCP socket wrapped with the cbor codec
-    ///
     msgs: Framed<TcpStream, Codec<Msg, Msg>>,
 
     /// Receive half of the message channel.
@@ -194,6 +182,7 @@ impl Connection {
         // Get the client socket address
         let addr = msgs.get_ref().peer_addr()?;
 
+        // Generate peer id. using the socket address for now.
         let peer_id = PeerId::new(&addr.to_string());
 
         // Create a channel for this peer
@@ -243,15 +232,13 @@ async fn process(
     {
         let mut state = state.lock().await;
         state.router.peer_add(&connection);
-        // state
-        //     .router
-        //     .attach(&ChannelId("broadcast".to_string()), &connection)?;
     }
 
     // Process incoming messages until our stream is exhausted by a disconnect.
     loop {
         tokio::select! {
-            // A message was received from a peer. Send it to the current user.
+            // A message was received for the peer. Send it to the framed TCP
+            // stream.
             Some(msg) = connection.rx.recv() => {
                 connection.msgs.send(msg).await.map_err(|e| {
                     connection.rx.close();
@@ -259,13 +246,12 @@ async fn process(
                 })?;
             }
             result = connection.msgs.next() => match result {
-                // A message was received from the current connection.
-                // pass it on to the router.
+                // A message was received from the peer's framed TCP stream.
                 Some(Ok(msg)) => {
                     match msg {
                         Msg::ChannelMsg(msg) => {
                             let mut state = state.lock().await;
-                            state.router.send(msg)?;
+                            state.router.send(msg).unwrap();
                         },
                         Msg::ControlMsg(controlmsg) => {
                             match controlmsg {
@@ -279,7 +265,9 @@ async fn process(
                                 }
                             }
                         }
-
+                        _ => {
+                            tracing::error!("unhandled message: {:?}", msg);
+                        }
                     }
                 }
                 // An error occurred.
@@ -301,10 +289,10 @@ async fn process(
         let mut state = state.lock().await;
         state.connections.remove(&addr);
         state.router.peer_remove(&connection);
-
-        let msg = format!("{} disconnected", &peer_name);
-        tracing::info!("{}", msg);
     }
+
+    let msg = format!("{} disconnected", &peer_name);
+    tracing::info!("{}", msg);
 
     Ok(())
 }

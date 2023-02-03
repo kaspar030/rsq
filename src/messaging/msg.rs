@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 pub enum Msg {
     ChannelMsg(ChannelMsg),
     ControlMsg(ControlMsg),
+    StatusMsg(StatusMsg),
 }
 
 #[derive(PartialEq, Eq, Hash, Clone, Debug, Serialize, Deserialize)]
@@ -22,6 +23,13 @@ pub struct ChannelMsg {
 pub enum ControlMsg {
     ChannelJoin(ChannelId),
     ChannelLeave(ChannelId),
+}
+
+#[derive(PartialEq, Eq, Hash, Clone, Debug, Serialize, Deserialize)]
+pub enum StatusMsg {
+    Connecting,
+    Connected,
+    Disconnected,
 }
 
 impl ChannelMsg {
@@ -59,6 +67,10 @@ impl Msg {
 
     pub fn get_id(&self) -> MsgId {
         MsgId(hash(self))
+    }
+
+    pub fn new_status(status: StatusMsg) -> Self {
+        Self::StatusMsg(status)
     }
 }
 

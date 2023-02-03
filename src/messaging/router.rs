@@ -39,7 +39,7 @@ impl Router {
             channel.send(msg);
             Ok(())
         } else {
-            Err(anyhow!("unknown channel"))
+            Err(anyhow!("unknown channel {:?}", msg.channel()))
         }
     }
 
