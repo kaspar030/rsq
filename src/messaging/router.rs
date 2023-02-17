@@ -5,6 +5,7 @@ use super::msg::{ChannelMsg, Msg};
 use super::peer::{Peer, PeerHandle, PeerId};
 use anyhow::{anyhow, Error};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 #[derive(Debug)]
 pub struct Router {
@@ -33,13 +34,18 @@ impl Router {
         self.channels.insert(channel.get_id().clone(), channel);
     }
 
-    pub fn send(&mut self, msg: ChannelMsg) -> Result<(), Error> {
-        let mut channel = self.channels.get_mut(msg.channel());
-        if let Some(channel) = &mut channel.as_mut() {
-            channel.send(msg);
+    pub fn forward(&mut self, msg: Arc<Msg>, sender: &PeerId) -> Result<(), Error> {
+        let (channel, channel_id) = if let Msg::ChannelMsg(msg) = msg.as_ref() {
+            (self.channels.get_mut(msg.channel()), msg.channel())
+        } else {
+            unreachable!();
+        };
+
+        if let Some(channel) = channel {
+            channel.forward(msg, sender);
             Ok(())
         } else {
-            Err(anyhow!("unknown channel {:?}", msg.channel()))
+            Err(anyhow!("unknown channel {:?}", channel_id))
         }
     }
 
@@ -49,7 +55,7 @@ impl Router {
             Channel::new(channel_id.clone())
         });
 
-        channel.attach(peer);
+        channel.subscribe(peer);
 
         Ok(())
     }
@@ -57,7 +63,7 @@ impl Router {
     pub fn detach(&mut self, channel_id: &ChannelId, peer: &dyn Peer) -> Result<(), Error> {
         let channel = self.channels.get_mut(channel_id);
         if let Some(channel) = channel {
-            if channel.detach(peer).is_some() {
+            if channel.unsubscribe(peer).is_some() {
                 tracing::info!("dropping channel {}", channel_id.0);
                 self.channels.remove(channel_id);
             }

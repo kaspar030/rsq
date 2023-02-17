@@ -133,14 +133,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
 }
 
 /// Shorthand for the transmit half of the message channel.
-type Tx = mpsc::UnboundedSender<Msg>;
+type PeerTx = mpsc::UnboundedSender<Arc<Msg>>;
 
 /// Shorthand for the receive half of the message channel.
-type Rx = mpsc::UnboundedReceiver<Msg>;
+type PeerRx = mpsc::UnboundedReceiver<Arc<Msg>>;
 
 /// Data that is shared between all client connections
 struct Shared {
-    connections: HashMap<SocketAddr, Tx>,
+    connections: HashMap<SocketAddr, PeerTx>,
     router: Router,
 }
 
@@ -153,12 +153,12 @@ struct Connection {
     ///
     /// This is used to receive messages from peers. When a message is received
     /// off of this `Rx`, it will be written to the socket.
-    rx: Rx,
+    rx: PeerRx,
 
     /// Sender message channel.
     ///
     /// Messages sent here will be sent to the Rx half.
-    tx: Tx,
+    tx: PeerTx,
 
     peer_id: PeerId,
 }
@@ -240,18 +240,21 @@ async fn process(
             // A message was received for the peer. Send it to the framed TCP
             // stream.
             Some(msg) = connection.rx.recv() => {
+                let msg = (*msg).clone();
                 connection.msgs.send(msg).await.map_err(|e| {
                     connection.rx.close();
                     e
                 })?;
             }
-            result = connection.msgs.next() => match result {
+            result = connection.msgs.next() =>
+                match result {
                 // A message was received from the peer's framed TCP stream.
                 Some(Ok(msg)) => {
                     match msg {
-                        Msg::ChannelMsg(msg) => {
+                        Msg::ChannelMsg(_) => {
+                            let msg = Arc::new(msg);
                             let mut state = state.lock().await;
-                            state.router.send(msg).unwrap();
+                            state.router.forward(msg, connection.get_id()).unwrap();
                         },
                         Msg::ControlMsg(controlmsg) => {
                             match controlmsg {
@@ -268,8 +271,7 @@ async fn process(
                         _ => {
                             tracing::error!("unhandled message: {:?}", msg);
                         }
-                    }
-                }
+                    }},
                 // An error occurred.
                 Some(Err(e)) => {
                     tracing::error!(

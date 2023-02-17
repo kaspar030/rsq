@@ -1,17 +1,13 @@
-use std::env;
 use std::net::SocketAddr;
 
 use anyhow::{Error, Result};
 use futures::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
 use tokio_serde_cbor::Codec;
-use tokio_stream::wrappers::{ReceiverStream, UnboundedReceiverStream};
+use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::codec::{FramedRead, FramedWrite};
 
-use crate as rsq;
-use rsq::messaging::channel::ChannelId;
-use rsq::messaging::msg::Msg;
-use rsq::messaging::peer::PeerId;
+use crate::messaging::msg::Msg;
 
 type Rx = tokio::sync::mpsc::Receiver<Msg>;
 type Tx = tokio::sync::mpsc::Sender<Msg>;
@@ -42,12 +38,12 @@ impl Rsq {
     }
 
     pub async fn connect(addr: SocketAddr, rx: Tx, tx: Rx, done: OneshotTx) -> Result<(), Error> {
-        use rsq::messaging::msg::*;
+        use crate::messaging::msg::*;
 
         rx.send(Msg::new_status(StatusMsg::Connecting)).await?;
 
         let mut stream = TcpStream::connect(addr).await?;
-        rx.send(Msg::new_status(rsq::messaging::msg::StatusMsg::Connected))
+        rx.send(Msg::new_status(crate::messaging::msg::StatusMsg::Connected))
             .await?;
 
         let (r, w) = stream.split();
@@ -85,7 +81,7 @@ impl Rsq {
         }
 
         rx.send(Msg::new_status(
-            rsq::messaging::msg::StatusMsg::Disconnected,
+            crate::messaging::msg::StatusMsg::Disconnected,
         ))
         .await?;
 

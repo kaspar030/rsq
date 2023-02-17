@@ -5,6 +5,8 @@ pub mod router;
 mod util;
 
 mod test {
+    use std::sync::Arc;
+
     use super::channel::*;
     use super::msg::*;
     use super::peer::*;
@@ -16,8 +18,8 @@ mod test {
     struct TestPeer {
         id: PeerId,
         num_received: usize,
-        tx: UnboundedSender<Msg>,
-        rx: UnboundedReceiver<Msg>,
+        tx: UnboundedSender<Arc<Msg>>,
+        rx: UnboundedReceiver<Arc<Msg>>,
     }
 
     impl TestPeer {
@@ -45,7 +47,7 @@ mod test {
         fn get_id(&self) -> &PeerId {
             &self.id
         }
-        fn get_sink(&self) -> &UnboundedSender<Msg> {
+        fn get_sink(&self) -> &UnboundedSender<Arc<Msg>> {
             &self.tx
         }
     }
@@ -61,11 +63,11 @@ mod test {
     fn peer_send() {
         let mut channel = Channel::new(ChannelId("test_channel".to_string()));
         let mut peer = TestPeer::new("test_peer");
-        let msg = Msg::new(
+        let msg = Arc::new(Msg::new_channel_msg(
             peer.get_id().clone(),
             channel.get_id().clone(),
-            Bytes::from("test_data"),
-        );
+            bytes::Bytes::from("test_data"),
+        ));
         assert_eq!(peer.num_received, 0);
         peer.get_sink().send(msg).unwrap();
         peer.poll();
@@ -77,17 +79,17 @@ mod test {
         let mut channel = Channel::new(ChannelId("test_channel".to_string()));
         let mut peer = TestPeer::new("test_peer");
         let mut peer2 = TestPeer::new("test_peer2");
-        let msg = Msg::new(
+        let msg = Msg::new_channel_msg(
             peer.get_id().clone(),
             channel.get_id().clone(),
-            Bytes::from("test_data"),
+            bytes::Bytes::from("test_data"),
         );
-        channel.attach(&peer);
-        channel.attach(&peer2);
+        channel.subscribe(&peer);
+        channel.subscribe(&peer2);
 
         assert_eq!(peer.num_received, 0);
         assert_eq!(peer2.num_received, 0);
-        channel.send(msg);
+        channel.forward(Arc::new(msg), peer.get_id());
         peer.poll();
         peer2.poll();
         assert_eq!(peer.num_received, 0);
@@ -96,11 +98,11 @@ mod test {
 
     #[test]
     fn router_basic() {
-        let mut router = Router::new();
-        let mut peer = Box::new(TestPeer::new("test_peer"));
-        let mut peer2 = Box::new(TestPeer::new("test_peer2"));
+        let router = Router::new();
+        let peer = Box::new(TestPeer::new("test_peer"));
+        let peer2 = Box::new(TestPeer::new("test_peer2"));
         let mut channel = Channel::new(ChannelId("test_channel".to_string()));
-        channel.attach(peer.as_ref());
-        channel.attach(peer2.as_ref());
+        channel.subscribe(peer.as_ref());
+        channel.subscribe(peer2.as_ref());
     }
 }
