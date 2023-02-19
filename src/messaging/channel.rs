@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use super::msg::{ChannelMsg, Msg};
+use super::msg::Msg;
 use super::peer::{Peer, PeerHandle, PeerId};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

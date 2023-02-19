@@ -1,13 +1,11 @@
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
-
 use super::channel::{Channel, ChannelId};
-use super::msg::{ChannelMsg, Msg};
+use super::msg::Msg;
 use super::peer::{Peer, PeerHandle, PeerId};
 use anyhow::{anyhow, Error};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Router {
     peers: HashMap<PeerId, PeerHandle>,
     channels: HashMap<ChannelId, Channel>,
@@ -15,10 +13,7 @@ pub struct Router {
 
 impl Router {
     pub fn new() -> Router {
-        Router {
-            peers: HashMap::new(),
-            channels: HashMap::new(),
-        }
+        Router::default()
     }
 
     pub fn peer_add(&mut self, peer: &dyn Peer) {

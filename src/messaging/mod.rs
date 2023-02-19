@@ -61,7 +61,7 @@ mod test {
 
     #[test]
     fn peer_send() {
-        let mut channel = Channel::new(ChannelId("test_channel".to_string()));
+        let channel = Channel::new(ChannelId("test_channel".to_string()));
         let mut peer = TestPeer::new("test_peer");
         let msg = Arc::new(Msg::new_channel_msg(
             peer.get_id().clone(),
