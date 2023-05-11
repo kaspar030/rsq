@@ -4,6 +4,7 @@ pub mod peer;
 pub mod router;
 mod util;
 
+#[cfg(test)]
 mod test {
     use std::sync::Arc;
 
