@@ -2,13 +2,16 @@
 //!
 
 use fdlimit::raise_fd_limit;
+
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, Mutex};
-use tokio_serde_cbor::Codec;
-use tokio_stream::StreamExt;
-use tokio_util::codec::Framed;
 
 use futures::SinkExt;
+use tokio_serde::SymmetricallyFramed;
+use tokio_stream::StreamExt;
+use tokio_util::codec::{Framed, LengthDelimitedCodec};
+
+//use futures::{Sink, Stream};
 use std::collections::HashMap;
 use std::env;
 use std::error::Error;
@@ -17,9 +20,14 @@ use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
+use anyhow::Context;
+
 use rsq::messaging::msg::{ControlMsg, Msg};
 use rsq::messaging::peer::{Peer, PeerHandle, PeerId};
 use rsq::messaging::router::Router;
+
+type MsgCodec = tokio_serde::formats::SymmetricalBincode<Msg>;
+type FramedMsgStream = SymmetricallyFramed<Framed<TcpStream, LengthDelimitedCodec>, Msg, MsgCodec>;
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -116,6 +124,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
         // Asynchronously wait for an inbound TcpStream.
         let (stream, addr) = listener.accept().await?;
+        stream.set_nodelay(true)?;
 
         // Clone a handle to the `Shared` state for the new connection.
         let state = Arc::clone(&state);
@@ -146,8 +155,8 @@ struct Shared {
 
 /// The state for each connected client.
 struct Connection {
-    /// The TCP socket wrapped with the cbor codec
-    msgs: Framed<TcpStream, Codec<Msg, Msg>>,
+    /// The TCP socket wrapped with the codec
+    msgs: FramedMsgStream,
 
     /// Receive half of the message channel.
     ///
@@ -175,12 +184,9 @@ impl Shared {
 
 impl Connection {
     /// Create a new instance of `Connection`.
-    async fn new(
-        state: &Arc<Mutex<Shared>>,
-        msgs: Framed<TcpStream, Codec<Msg, Msg>>,
-    ) -> io::Result<Connection> {
+    async fn new(state: &Arc<Mutex<Shared>>, msgs: FramedMsgStream) -> io::Result<Connection> {
         // Get the client socket address
-        let addr = msgs.get_ref().peer_addr()?;
+        let addr = msgs.get_ref().get_ref().peer_addr()?;
 
         // Generate peer id. using the socket address for now.
         let peer_id = PeerId::new(&addr.to_string());
@@ -219,7 +225,8 @@ async fn process(
     stream: TcpStream,
     addr: SocketAddr,
 ) -> Result<(), Box<dyn Error>> {
-    let msgs = Framed::new(stream, Codec::new());
+    let length_delimited = Framed::new(stream, tokio_util::codec::LengthDelimitedCodec::new());
+    let msgs = tokio_serde::SymmetricallyFramed::new(length_delimited, MsgCodec::default());
 
     // Register our peer with state which internally sets up some channels.
     let mut connection = Connection::new(&state, msgs).await?;
@@ -244,7 +251,7 @@ async fn process(
                 connection.msgs.send(msg).await.map_err(|e| {
                     connection.rx.close();
                     e
-                })?;
+                }).context("while sending a message")?;
             }
             result = connection.msgs.next() =>
                 match result {

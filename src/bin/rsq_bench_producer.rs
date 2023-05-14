@@ -23,6 +23,14 @@ async fn main() -> Result<(), Error> {
     println!("connecting...");
     let rsq = Rsq::new(&addr).await;
 
+    let msg = Msg::new_channel_msg(
+                PeerId::new("sender"),
+                channel_id.clone(),
+                // 100 bytes
+"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into()
+//"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into()
+            );
+
     println!("sending...");
     rsq.tx
         .send(Msg::new_channel_msg(
@@ -33,20 +41,19 @@ async fn main() -> Result<(), Error> {
         .await
         .unwrap();
 
-    for n in 0..1000000 {
+    let start = std::time::Instant::now();
+    let iterations = 1000000usize;
+    for n in 0..iterations {
         if n % 10000 == 0 {
             println!("{n}");
         }
-        rsq.tx
-            .send(Msg::new_channel_msg(
-                PeerId::new("sender"),
-                channel_id.clone(),
-                // 100 bytes
-                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into()
-            ))
-            .await
-            .unwrap();
+        rsq.tx.send(msg.clone()).await.unwrap();
     }
+    let bytes = iterations;
+    let elapsed = start.elapsed();
+    let msgs_per_sec = (iterations as u128 / elapsed.as_millis()) * 1000;
+    let mb_per_sec = (bytes / elapsed.as_secs() as usize) / (1024 * 1024);
+    println!("{iterations} msgs / {bytes} in {elapsed:?} ({msgs_per_sec}/s, {mb_per_sec}MB/s)");
 
     rsq.tx
         .send(Msg::new_channel_msg(

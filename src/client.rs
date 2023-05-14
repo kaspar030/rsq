@@ -1,11 +1,13 @@
 use std::net::SocketAddr;
+use std::time::Duration;
 
 use anyhow::{Error, Result};
-use futures::{SinkExt, StreamExt};
+
+use futures::SinkExt;
 use tokio::net::TcpStream;
-use tokio_serde_cbor::Codec;
 use tokio_stream::wrappers::ReceiverStream;
-use tokio_util::codec::{FramedRead, FramedWrite};
+use tokio_stream::StreamExt;
+use tokio_util::codec::Framed;
 
 use crate::messaging::msg::Msg;
 
@@ -14,7 +16,7 @@ type Tx = tokio::sync::mpsc::Sender<Msg>;
 type OnshotRx = tokio::sync::oneshot::Receiver<()>;
 type OneshotTx = tokio::sync::oneshot::Sender<()>;
 
-type MsgCodec = Codec<Msg, Msg>;
+type MsgCodec = tokio_serde::formats::SymmetricalBincode<Msg>;
 
 pub struct Rsq {
     pub tx: Tx,
@@ -42,19 +44,23 @@ impl Rsq {
 
         rx.send(Msg::new_status(StatusMsg::Connecting)).await?;
 
-        let mut stream = TcpStream::connect(addr).await?;
+        let stream = TcpStream::connect(addr).await?;
+        stream.set_nodelay(true)?;
+        stream.set_linger(Some(Duration::from_secs(10)))?;
+
         rx.send(Msg::new_status(crate::messaging::msg::StatusMsg::Connected))
             .await?;
 
-        let (r, w) = stream.split();
-        let mut reader = FramedRead::new(r, MsgCodec::new());
-        let mut writer = FramedWrite::new(w, MsgCodec::new());
+        let length_delimited = Framed::new(stream, tokio_util::codec::LengthDelimitedCodec::new());
+        let mut serialized =
+            tokio_serde::SymmetricallyFramed::new(length_delimited, MsgCodec::default());
+
         let mut tx = ReceiverStream::new(tx);
 
         loop {
             tokio::select! {
                 // A message was received from the server.
-                result = reader.next() => match result {
+                result = serialized.next() => match result {
                     // A message was received from the current connection.
                     // pass it on to the application.
                     Some(Ok(msg)) => {
@@ -72,7 +78,7 @@ impl Rsq {
                 },
                 result = tx.next() => match result {
                     Some(msg) => {
-                        writer.send(msg).await?;
+                        serialized.send(msg).await?;
                     }
                     // The stream has been exhausted.
                     None => break,
