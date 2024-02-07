@@ -35,20 +35,17 @@ impl Channel {
         self.subscriptions.remove(peer.get_id()).map(|_| ())
     }
 
-    pub fn forward(&mut self, msg: Arc<Msg>, sender: &PeerId) {
+    pub fn forward(&mut self, msg: Arc<Msg>, sender: &PeerId) -> usize {
+        let mut count = 0usize;
         self.subscriptions.retain(|peer_id, peer| {
             if peer_id != sender {
-                match peer.send(msg.clone()) {
-                    Ok(_) => true,
-                    Err(_) => {
-                        // probably the channel was closed when the peer
-                        // disconnected.
-                        false
-                    }
-                }
+                // If this errors, probably the peer's channel was closed when the peer
+                // disconnected.
+                peer.send(msg.clone()).inspect(|_| count += 1).is_ok()
             } else {
                 true
             }
         });
+        count
     }
 }

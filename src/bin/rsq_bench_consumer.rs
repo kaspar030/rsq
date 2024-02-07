@@ -13,7 +13,7 @@ async fn main() -> Result<(), Error> {
     let addr = "127.0.0.1:6142".to_string();
     let addr = addr.parse::<SocketAddr>()?;
 
-    let mut rsq = Rsq::new(&addr).await;
+    let rsq = Rsq::new(&addr).await;
 
     let mut args: Vec<String> = std::env::args().collect();
     let channel_id = if args.len() >= 2 {
@@ -22,14 +22,14 @@ async fn main() -> Result<(), Error> {
         ChannelId("test_channel".into())
     };
 
-    rsq.tx.send(Msg::channel_join(channel_id)).await?;
+    rsq.tx.send_async(Msg::channel_join(channel_id)).await?;
 
     let mut i = 0;
     let mut bytes = 0usize;
     let mut start = std::time::Instant::now();
     loop {
-        match rsq.rx.recv().await {
-            Some(Msg::ChannelMsg(msg)) => {
+        match rsq.rx.recv_async().await {
+            Ok(Msg::ChannelMsg(msg)) => {
                 let msg_content = msg.content();
                 if msg_content.len() <= 5 {
                     let msg_str = std::str::from_utf8(msg.content()).unwrap();
@@ -56,8 +56,8 @@ async fn main() -> Result<(), Error> {
                     println!("i={i}");
                 }
             }
-            Some(_) => {}
-            None => break,
+            Ok(_) => {}
+            Err(_) => break,
         }
     }
 

@@ -24,16 +24,17 @@ async fn main() -> Result<(), Error> {
     let rsq = Rsq::new(&addr).await;
 
     let msg = Msg::new_channel_msg(
-                PeerId::new("sender"),
-                channel_id.clone(),
-                // 100 bytes
-"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into()
-//"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into()
-            );
+        PeerId::new("sender"),
+        channel_id.clone(),
+        // 100 bytes
+        //"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into()
+        // 400 bytes
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into()
+    );
 
     println!("sending...");
     rsq.tx
-        .send(Msg::new_channel_msg(
+        .send_async(Msg::new_channel_msg(
             PeerId::new("sender"),
             channel_id.clone(),
             "start".into(),
@@ -47,7 +48,7 @@ async fn main() -> Result<(), Error> {
         if n % 10000 == 0 {
             println!("{n}");
         }
-        rsq.tx.send(msg.clone()).await.unwrap();
+        rsq.tx.send_async(msg.clone()).await.unwrap();
     }
     let bytes = iterations;
     let elapsed = start.elapsed();
@@ -56,7 +57,7 @@ async fn main() -> Result<(), Error> {
     println!("{iterations} msgs / {bytes} in {elapsed:?} ({msgs_per_sec}/s, {mb_per_sec}MB/s)");
 
     rsq.tx
-        .send(Msg::new_channel_msg(
+        .send_async(Msg::new_channel_msg(
             PeerId::new("sender"),
             channel_id,
             "stop".into(),

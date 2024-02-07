@@ -1,4 +1,5 @@
 pub mod channel;
+pub mod errors;
 pub mod msg;
 pub mod peer;
 pub mod router;

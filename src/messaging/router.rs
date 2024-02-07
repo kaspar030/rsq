@@ -1,9 +1,12 @@
 use super::channel::{Channel, ChannelId};
 use super::msg::Msg;
 use super::peer::{Peer, PeerHandle, PeerId};
-use anyhow::{anyhow, Error};
 use std::collections::HashMap;
 use std::sync::Arc;
+
+use anyhow::Error;
+
+use super::errors::TxError;
 
 #[derive(Debug, Default)]
 pub struct Router {
@@ -29,26 +32,29 @@ impl Router {
         self.channels.insert(channel.get_id().clone(), channel);
     }
 
-    pub fn forward(&mut self, msg: Arc<Msg>, sender: &PeerId) -> Result<(), Error> {
-        let (channel, channel_id) = if let Msg::ChannelMsg(msg) = msg.as_ref() {
-            (self.channels.get_mut(msg.channel()), msg.channel())
+    pub fn channel_get(&mut self, channel_id: &ChannelId) -> Option<&mut Channel> {
+        self.channels.get_mut(channel_id)
+    }
+
+    pub fn channel_get_or_add(&mut self, channel_id: &ChannelId) -> &mut Channel {
+        self.channels.entry(channel_id.clone()).or_insert_with(|| {
+            tracing::info!("creating channel {}", channel_id.0);
+            Channel::new(channel_id.clone())
+        })
+    }
+
+    pub fn forward(&mut self, msg: Arc<Msg>, sender: &PeerId) -> usize {
+        let channel = if let Msg::ChannelMsg(msg) = msg.as_ref() {
+            self.channel_get_or_add(msg.channel())
         } else {
             unreachable!();
         };
 
-        if let Some(channel) = channel {
-            channel.forward(msg, sender);
-            Ok(())
-        } else {
-            Err(anyhow!("unknown channel {:?}", channel_id))
-        }
+        channel.forward(msg, sender)
     }
 
     pub fn attach(&mut self, channel_id: &ChannelId, peer: &dyn Peer) -> Result<(), Error> {
-        let channel = self.channels.entry(channel_id.clone()).or_insert_with(|| {
-            tracing::info!("creating channel {}", channel_id.0);
-            Channel::new(channel_id.clone())
-        });
+        let channel = self.channel_get_or_add(channel_id);
 
         channel.subscribe(peer);
 

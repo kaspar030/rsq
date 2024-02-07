@@ -14,7 +14,7 @@ async fn main() -> Result<(), Error> {
     let addr = "127.0.0.1:6142".to_string();
     let addr = addr.parse::<SocketAddr>()?;
 
-    let mut rsq = Rsq::new(&addr).await;
+    let rsq = Rsq::new(&addr).await;
 
     let mut args: Vec<String> = std::env::args().collect();
     let channel_id = if args.len() >= 2 {
@@ -23,30 +23,32 @@ async fn main() -> Result<(), Error> {
         ChannelId("test_channel".into())
     };
 
-    rsq.tx.send(Msg::channel_join(channel_id.clone())).await?;
+    rsq.tx
+        .send_async(Msg::channel_join(channel_id.clone()))
+        .await?;
 
     let start = std::time::Instant::now();
-    let N = 100000;
-    for _ in 0..N {
+    let n = 100000;
+    for _ in 0..n {
         rsq.tx
-            .send(Msg::new_channel_msg(
+            .send_async(Msg::new_channel_msg(
                 PeerId::new("sender"),
                 channel_id.clone(),
                 "ping".into(),
             ))
             .await
             .unwrap();
-        match rsq.rx.recv().await {
-            Some(Msg::ChannelMsg(_msg)) => {}
-            Some(_) => {
+        match rsq.rx.recv_async().await {
+            Ok(Msg::ChannelMsg(_msg)) => {}
+            Ok(_) => {
                 println!("other");
             }
-            None => break,
+            _ => break,
         }
     }
     let elapsed = start.elapsed();
     let ns = elapsed.as_nanos();
-    println!("{N} send/reply in {elapsed:.2?}, {}ns/op", ns / N);
+    println!("{n} send/reply in {elapsed:.2?}, {}ns/op", ns / n);
     rsq.finish().await?;
 
     Ok(())

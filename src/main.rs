@@ -248,9 +248,8 @@ async fn process(
             // stream.
             Some(msg) = connection.rx.recv() => {
                 let msg = (*msg).clone();
-                connection.msgs.send(msg).await.map_err(|e| {
+                connection.msgs.send(msg).await.inspect_err(|_e| {
                     connection.rx.close();
-                    e
                 }).context("while sending a message")?;
             }
             result = connection.msgs.next() =>
@@ -261,7 +260,7 @@ async fn process(
                         Msg::ChannelMsg(_) => {
                             let msg = Arc::new(msg);
                             let mut state = state.lock().await;
-                            state.router.forward(msg, connection.get_id()).unwrap();
+                            let _count = state.router.forward(msg, connection.get_id());
                         },
                         Msg::ControlMsg(controlmsg) => {
                             match controlmsg {
@@ -300,8 +299,7 @@ async fn process(
         state.router.peer_remove(&connection);
     }
 
-    let msg = format!("{} disconnected", &peer_name);
-    tracing::info!("{}", msg);
+    tracing::info!("{peer_name} disconnected");
 
     Ok(())
 }
