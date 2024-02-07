@@ -26,8 +26,9 @@ copy on one computer, paste on the other!
 
 #### file transfer
 
-have a "friend". to `rsq sendfile <friend>`. friend receives file. all encrypted,
+have a "friend". do `rsq sendfile <friend>`. friend receives file. all encrypted,
 using pre-made friend connections.
+possibly, store file on server.
 
 #### automatically updating contacts
 
