@@ -4,7 +4,7 @@
 use fdlimit::{raise_fd_limit, Outcome};
 
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::Mutex;
 
 use futures::SinkExt;
 use tokio_serde::SymmetricallyFramed;
@@ -142,10 +142,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
 }
 
 /// Shorthand for the transmit half of the message channel.
-type PeerTx = mpsc::UnboundedSender<Arc<Msg>>;
+type PeerTx = flume::Sender<Arc<Msg>>;
 
 /// Shorthand for the receive half of the message channel.
-type PeerRx = mpsc::UnboundedReceiver<Arc<Msg>>;
+type PeerRx = flume::Receiver<Arc<Msg>>;
 
 /// Data that is shared between all client connections
 struct Shared {
@@ -192,7 +192,7 @@ impl Connection {
         let peer_id = PeerId::new(&addr.to_string());
 
         // Create a channel for this peer
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx, rx) = flume::unbounded();
 
         // Add an entry for this `Connection` in the shared state map.
         {
@@ -246,10 +246,10 @@ async fn process(
         tokio::select! {
             // A message was received for the peer. Send it to the framed TCP
             // stream.
-            Some(msg) = connection.rx.recv() => {
+            Ok(msg) = connection.rx.recv_async() => {
                 let msg = (*msg).clone();
                 connection.msgs.send(msg).await.inspect_err(|_e| {
-                    connection.rx.close();
+                    //connection.rx.close().await;
                 }).context("while sending a message")?;
             }
             result = connection.msgs.next() =>

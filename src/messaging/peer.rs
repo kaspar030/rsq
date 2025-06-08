@@ -1,11 +1,10 @@
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc::UnboundedSender;
 
 use super::msg::Msg;
 
-pub type PeerHandle = UnboundedSender<Arc<Msg>>;
+pub type PeerHandle = flume::Sender<Arc<Msg>>;
 
 #[derive(PartialEq, Eq, Clone, Debug, Hash, Serialize, Deserialize)]
 pub struct PeerId {
