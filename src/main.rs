@@ -1,7 +1,7 @@
 //! A message broker in Rust.
 //!
 
-use fdlimit::raise_fd_limit;
+use fdlimit::{raise_fd_limit, Outcome};
 
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, Mutex};
@@ -98,8 +98,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .unwrap_or_else(|| "127.0.0.1:6142".to_string());
 
     // figure out possible number of connections
-    let max_connections = if let Some(max) = raise_fd_limit() {
-        max - 64
+    let max_connections = if let Outcome::LimitRaised { from: _, to } = raise_fd_limit()? {
+        to - 64
     } else {
         512
     };
