@@ -3,22 +3,20 @@
 
 use fdlimit::{raise_fd_limit, Outcome};
 
-use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::Mutex;
+use monoio::io::sink::Sink;
+use monoio::io::stream::Stream;
+use monoio::net::{TcpListener, TcpStream};
 
-use futures::SinkExt;
-use tokio_serde::SymmetricallyFramed;
-use tokio_stream::StreamExt;
-use tokio_util::codec::{Framed, LengthDelimitedCodec};
-
-//use futures::{Sink, Stream};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::env;
 use std::error::Error;
 use std::io;
 use std::net::SocketAddr;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Context;
 
@@ -26,8 +24,10 @@ use rsq::messaging::msg::{ControlMsg, Msg};
 use rsq::messaging::peer::{Peer, PeerHandle, PeerId};
 use rsq::messaging::router::Router;
 
-type MsgCodec = tokio_serde::formats::SymmetricalBincode<Msg>;
-type FramedMsgStream = SymmetricallyFramed<Framed<TcpStream, LengthDelimitedCodec>, Msg, MsgCodec>;
+// Codec
+use monoio_codec::Framed;
+use rsq::monoio_bincode::BincodeCodec;
+type FramedMsgStream = Framed<TcpStream, BincodeCodec<Msg>>;
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -65,7 +65,7 @@ static OPEN_CONNECTIONS: AtomicU64 = AtomicU64::new(0);
 //     count: AtomicUsize::new(0),
 // };
 
-#[tokio::main]
+#[monoio::main(enable_timer = true)]
 async fn main() -> Result<(), Box<dyn Error>> {
     use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter};
     // Configure a `tracing` subscriber
@@ -91,7 +91,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // The server task will hold a handle to this. For every new client, the
     // `state` handle is cloned and passed into the task that processes the
     // client connection.
-    let state = Arc::new(Mutex::new(Shared::new()));
+    let state = Rc::new(RefCell::new(Shared::new()));
 
     let addr = env::args()
         .nth(1)
@@ -105,7 +105,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     };
 
     // Bind a TCP listener to the socket address.
-    let listener = TcpListener::bind(&addr).await?;
+    let listener = TcpListener::bind(&addr)?;
 
     tracing::info!("server running on {}", addr);
     tracing::info!("server accepting up to {} connections", max_connections);
@@ -116,7 +116,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // });
     loop {
         while OPEN_CONNECTIONS.load(Ordering::Relaxed) >= max_connections {
-            use tokio::time::{sleep, Duration};
+            use monoio::time::{sleep, Duration};
 
             tracing::info!("connection limit ({}) reached", max_connections);
             sleep(Duration::from_secs(1)).await;
@@ -127,10 +127,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
         stream.set_nodelay(true)?;
 
         // Clone a handle to the `Shared` state for the new connection.
-        let state = Arc::clone(&state);
+        let state = Rc::clone(&state);
 
         // Spawn our handler to be run asynchronously.
-        tokio::spawn(async move {
+        monoio::spawn(async move {
             tracing::debug!("accepted connection");
             OPEN_CONNECTIONS.fetch_add(1, Ordering::Relaxed);
             if let Err(e) = process(state, stream, addr).await {
@@ -184,9 +184,9 @@ impl Shared {
 
 impl Connection {
     /// Create a new instance of `Connection`.
-    async fn new(state: &Arc<Mutex<Shared>>, msgs: FramedMsgStream) -> io::Result<Connection> {
+    async fn new(state: &Rc<RefCell<Shared>>, msgs: FramedMsgStream) -> io::Result<Connection> {
         // Get the client socket address
-        let addr = msgs.get_ref().get_ref().peer_addr()?;
+        let addr = msgs.get_ref().peer_addr()?;
 
         // Generate peer id. using the socket address for now.
         let peer_id = PeerId::new(&addr.to_string());
@@ -196,7 +196,7 @@ impl Connection {
 
         // Add an entry for this `Connection` in the shared state map.
         {
-            let mut state = state.lock().await;
+            let mut state = state.borrow_mut();
             state.connections.insert(addr, tx.clone());
         }
 
@@ -221,12 +221,11 @@ impl Peer for Connection {
 
 /// Process an individual chat client
 async fn process(
-    state: Arc<Mutex<Shared>>,
+    state: Rc<RefCell<Shared>>,
     stream: TcpStream,
     addr: SocketAddr,
 ) -> Result<(), Box<dyn Error>> {
-    let length_delimited = Framed::new(stream, tokio_util::codec::LengthDelimitedCodec::new());
-    let msgs = tokio_serde::SymmetricallyFramed::new(length_delimited, MsgCodec::default());
+    let msgs = Framed::new(stream, BincodeCodec::new());
 
     // Register our peer with state which internally sets up some channels.
     let mut connection = Connection::new(&state, msgs).await?;
@@ -237,20 +236,28 @@ async fn process(
 
     // A client has connected
     {
-        let mut state = state.lock().await;
+        let mut state = state.borrow_mut();
         state.router.peer_add(&connection);
     }
 
     // Process incoming messages until our stream is exhausted by a disconnect.
     loop {
-        tokio::select! {
+        monoio::select! {
             // A message was received for the peer. Send it to the framed TCP
             // stream.
-            Ok(msg) = connection.rx.recv_async() => {
-                let msg = (*msg).clone();
-                connection.msgs.send(msg).await.inspect_err(|_e| {
-                    //connection.rx.close().await;
-                }).context("while sending a message")?;
+            msg = connection.rx.recv_async() => {
+                match msg {
+                    Ok(msg) => {
+                        let msg = (*msg).clone();
+                        connection.msgs.send(msg).await.inspect_err(|_e| {
+                        //connection.rx.close().await;
+                        }).context("while sending a message")?;
+                        if connection.rx.is_empty() {
+                            connection.msgs.flush().await?;
+                        }
+                        },
+                    Err(e) => tracing::error!("{e}"),
+                }
             }
             result = connection.msgs.next() =>
                 match result {
@@ -259,17 +266,17 @@ async fn process(
                     match msg {
                         Msg::ChannelMsg(_) => {
                             let msg = Arc::new(msg);
-                            let mut state = state.lock().await;
+                            let mut state = state.borrow_mut();
                             let _count = state.router.forward(msg, connection.get_id());
                         },
                         Msg::ControlMsg(controlmsg) => {
                             match controlmsg {
                                 ControlMsg::ChannelJoin(channel) => {
-                                    let mut state = state.lock().await;
+                                    let mut state = state.borrow_mut();
                                     state.router.attach(&channel, &connection)?;
                                 }
                                 ControlMsg::ChannelLeave(channel) => {
-                                    let mut state = state.lock().await;
+                                    let mut state = state.borrow_mut();
                                     state.router.detach(&channel, &connection)?;
                                 }
                             }
@@ -289,12 +296,12 @@ async fn process(
                 // The stream has been exhausted.
                 None => break,
             },
-        }
+        };
     }
 
     // If this section is reached it means that the client was disconnected!
     {
-        let mut state = state.lock().await;
+        let mut state = state.borrow_mut();
         state.connections.remove(&addr);
         state.router.peer_remove(&connection);
     }

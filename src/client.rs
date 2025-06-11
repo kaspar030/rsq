@@ -3,19 +3,18 @@ use std::time::Duration;
 
 use anyhow::{Error, Result};
 
-use futures::SinkExt;
-use tokio::net::TcpStream;
-use tokio_stream::StreamExt;
-use tokio_util::codec::Framed;
+use monoio::{
+    io::{sink::Sink, stream::Stream},
+    net::TcpStream,
+};
+use monoio_codec::Framed;
 
-use crate::messaging::msg::Msg;
+use crate::{messaging::msg::Msg, monoio_bincode::BincodeCodec};
 
 type Rx = flume::Receiver<Msg>;
 type Tx = flume::Sender<Msg>;
-type OnshotRx = tokio::sync::oneshot::Receiver<()>;
-type OneshotTx = tokio::sync::oneshot::Sender<()>;
-
-type MsgCodec = tokio_serde::formats::SymmetricalBincode<Msg>;
+type OnshotRx = local_sync::oneshot::Receiver<()>;
+type OneshotTx = local_sync::oneshot::Sender<()>;
 
 pub struct Rsq {
     pub tx: Tx,
@@ -27,9 +26,9 @@ impl Rsq {
     pub async fn new(addr: &SocketAddr) -> Rsq {
         let (out_tx, out_rx) = flume::bounded(1000);
         let (in_tx, in_rx) = flume::bounded(1000);
-        let (done_tx, done) = tokio::sync::oneshot::channel();
+        let (done_tx, done) = local_sync::oneshot::channel();
 
-        tokio::spawn(Self::connect(*addr, in_tx, out_rx, done_tx));
+        monoio::spawn(Self::connect(*addr, in_tx, out_rx, done_tx));
 
         Rsq {
             tx: out_tx,
@@ -46,19 +45,25 @@ impl Rsq {
 
         let stream = TcpStream::connect(addr).await?;
         stream.set_nodelay(true)?;
-        stream.set_linger(Some(Duration::from_secs(10)))?;
+        //        stream.set_linger(Some(Duration::from_secs(10)))?;
 
         rx.send_async(Msg::new_status(crate::messaging::msg::StatusMsg::Connected))
             .await?;
 
-        let length_delimited = Framed::new(stream, tokio_util::codec::LengthDelimitedCodec::new());
-        let mut serialized =
-            tokio_serde::SymmetricallyFramed::new(length_delimited, MsgCodec::default());
-
-        //let mut tx = ReceiverStream::new(tx);
+        let mut serialized = Framed::new(stream, BincodeCodec::new());
 
         loop {
-            tokio::select! {
+            monoio::select! {
+                result = tx.recv_async() => match result {
+                    Ok(msg) => {
+                        serialized.send(msg).await?;
+                        if tx.is_empty() {
+                            serialized.flush().await?;
+                        }
+                    }
+                    // The stream has been exhausted.
+                    Err(_) => break,
+                },
                 // A message was received from the server.
                 result = serialized.next() => match result {
                     // A message was received from the current connection.
@@ -76,15 +81,11 @@ impl Rsq {
                     // The stream has been exhausted.
                     None => break,
                 },
-                result = tx.recv_async() => match result {
-                    Ok(msg) => {
-                        serialized.send(msg).await?;
-                    }
-                    // The stream has been exhausted.
-                    Err(_) => break,
-                }
             }
         }
+
+        // close stream so it flushes
+        serialized.close().await?;
 
         rx.send_async(Msg::new_status(
             crate::messaging::msg::StatusMsg::Disconnected,

@@ -8,20 +8,19 @@ edition = "2018"
 
 [dependencies]
 anyhow = "1.0.98"
-bincode = "1.3.3"
+bincode = { version = "2.0.1", features = ["serde"] }
 bytes = { version = "1", features = ["serde"] }
 clap = { version = "4.5.39", features = ["env", "cargo"] }
 fdlimit = "0.3.0"
 flume = "0.11.1"
 futures = "0.3.31"
+local-sync = "0.1.1"
 mimalloc = { version = "0.1.46", default-features = false }
+monoio = { version = "0.2.4", features = ["splice", "flume", "tracing"] }
+monoio-codec = "0.3.4"
 serde = { version = "1.0.219", features = ["derive"] }
 slotmap = "1.0.7"
 thiserror = "2.0.12"
-tokio = { version = "1.45.1", features = ["full"] }
-tokio-serde = { version = "0.9.0", features = ["bincode", "json"] }
-tokio-stream = "0.1.17"
-tokio-util = { version = "0.7.15", features = ["codec"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = [
   "parking_lot",
