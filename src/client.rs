@@ -1,13 +1,12 @@
 use std::net::SocketAddr;
-use std::time::Duration;
 
 use anyhow::{Error, Result};
 
 use monoio::{
-    io::{sink::Sink, stream::Stream},
+    io::{sink::Sink, stream::Stream, Splitable},
     net::TcpStream,
 };
-use monoio_codec::Framed;
+use monoio_codec::{FramedRead, FramedWrite};
 
 use crate::{messaging::msg::Msg, monoio_bincode::BincodeCodec};
 
@@ -45,27 +44,34 @@ impl Rsq {
 
         let stream = TcpStream::connect(addr).await?;
         stream.set_nodelay(true)?;
-        //        stream.set_linger(Some(Duration::from_secs(10)))?;
+        let (stream_in, stream_out) = stream.into_split();
+        let mut msgs_in = FramedRead::new(stream_in, BincodeCodec::<Msg>::new());
+        let mut msgs_out = FramedWrite::new(stream_out, BincodeCodec::<Msg>::new());
 
         rx.send_async(Msg::new_status(crate::messaging::msg::StatusMsg::Connected))
             .await?;
 
-        let mut serialized = Framed::new(stream, BincodeCodec::new());
-
-        loop {
-            monoio::select! {
-                result = tx.recv_async() => match result {
-                    Ok(msg) => {
-                        serialized.send(msg).await?;
-                        if tx.is_empty() {
-                            serialized.flush().await?;
-                        }
+        monoio::select! {
+            _ = async {
+                loop {
+                    match tx.recv_async().await {
+                        Ok(msg) => {
+                            msgs_out.send(msg).await?;
+                            if tx.is_empty() {
+                                msgs_out.flush().await?;
+                            }
+                        },
+                        // The stream has been exhausted.
+                        Err(_) => break,
                     }
-                    // The stream has been exhausted.
-                    Err(_) => break,
-                },
-                // A message was received from the server.
-                result = serialized.next() => match result {
+                }
+                Ok::<(), anyhow::Error>(())
+            } => {
+            }
+            // A message was received from the server.
+            _ = async {
+                loop {
+                    match msgs_in.next().await {
                     // A message was received from the current connection.
                     // pass it on to the application.
                     Some(Ok(msg)) => {
@@ -78,14 +84,17 @@ impl Rsq {
                             e
                         );
                     }
-                    // The stream has been exhausted.
+                   // The stream has been exhausted.
                     None => break,
-                },
+                    }
+                }
+                Ok::<(), anyhow::Error>(())
+            } => {
             }
         }
 
         // close stream so it flushes
-        serialized.close().await?;
+        msgs_out.close().await?;
 
         rx.send_async(Msg::new_status(
             crate::messaging::msg::StatusMsg::Disconnected,
