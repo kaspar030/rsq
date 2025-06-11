@@ -33,12 +33,12 @@ async fn main() -> Result<(), Error> {
     let msg = Msg::new_channel_msg(PeerId::new("sender"), channel_id.clone(), 
         "pingaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into());
     let start = std::time::Instant::now();
-    let n = 10000;
+    let n = 100000;
     for i in 0..n {
         rsq.tx.send_async(msg.clone()).await.unwrap();
         match rsq.rx.recv_async().await {
             Ok(Msg::ChannelMsg(_msg)) => {
-                if i % 10 == 0 {
+                if i % 1000 == 0 {
                     println!("{i}");
                 }
             }
@@ -49,8 +49,12 @@ async fn main() -> Result<(), Error> {
         }
     }
     let elapsed = start.elapsed();
-    let ns = elapsed.as_nanos();
-    println!("{n} send/reply in {elapsed:.2?}, {}ns/op", ns / n);
+    let us = elapsed.as_micros();
+    println!(
+        "{n} send/reply in {elapsed:.2?}, {}/s, {}us/op",
+        n * 1000 / elapsed.as_millis() + 1,
+        us / n as u128
+    );
     rsq.finish().await?;
 
     Ok(())

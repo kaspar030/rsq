@@ -3,20 +3,20 @@
 
 use fdlimit::{raise_fd_limit, Outcome};
 
+use flume::Receiver;
 use monoio::io::sink::Sink;
 use monoio::io::stream::Stream;
+use monoio::io::{OwnedReadHalf, OwnedWriteHalf, Splitable};
 use monoio::net::{TcpListener, TcpStream};
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::env;
 use std::error::Error;
-use std::io;
 use std::net::SocketAddr;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
 
 use anyhow::Context;
 
@@ -25,9 +25,8 @@ use rsq::messaging::peer::{Peer, PeerHandle, PeerId};
 use rsq::messaging::router::Router;
 
 // Codec
-use monoio_codec::Framed;
+use monoio_codec::{Framed, FramedRead, FramedWrite};
 use rsq::monoio_bincode::BincodeCodec;
-type FramedMsgStream = Framed<TcpStream, BincodeCodec<Msg>>;
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -144,26 +143,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
 /// Shorthand for the transmit half of the message channel.
 type PeerTx = flume::Sender<Arc<Msg>>;
 
-/// Shorthand for the receive half of the message channel.
-type PeerRx = flume::Receiver<Arc<Msg>>;
-
 /// Data that is shared between all client connections
 struct Shared {
     connections: HashMap<SocketAddr, PeerTx>,
     router: Router,
 }
 
-/// The state for each connected client.
-struct Connection {
-    /// The TCP socket wrapped with the codec
-    msgs: FramedMsgStream,
-
-    /// Receive half of the message channel.
-    ///
-    /// This is used to receive messages from peers. When a message is received
-    /// off of this `Rx`, it will be written to the socket.
-    rx: PeerRx,
-
+/// `Peer` handle for TCP connections.
+struct ConnectionPeer {
     /// Sender message channel.
     ///
     /// Messages sent here will be sent to the Rx half.
@@ -182,34 +169,20 @@ impl Shared {
     }
 }
 
-impl Connection {
+impl ConnectionPeer {
     /// Create a new instance of `Connection`.
-    async fn new(state: &Rc<RefCell<Shared>>, msgs: FramedMsgStream) -> io::Result<Connection> {
-        // Get the client socket address
-        let addr = msgs.get_ref().peer_addr()?;
-
+    fn new(peer_addr: SocketAddr) -> (Receiver<Arc<Msg>>, ConnectionPeer) {
         // Generate peer id. using the socket address for now.
-        let peer_id = PeerId::new(&addr.to_string());
+        let peer_id = PeerId::new(&peer_addr.to_string());
 
         // Create a channel for this peer
         let (tx, rx) = flume::unbounded();
 
-        // Add an entry for this `Connection` in the shared state map.
-        {
-            let mut state = state.borrow_mut();
-            state.connections.insert(addr, tx.clone());
-        }
-
-        Ok(Connection {
-            msgs,
-            tx,
-            rx,
-            peer_id,
-        })
+        (rx, ConnectionPeer { tx, peer_id })
     }
 }
 
-impl Peer for Connection {
+impl Peer for ConnectionPeer {
     fn get_id(&self) -> &PeerId {
         &self.peer_id
     }
@@ -225,10 +198,13 @@ async fn process(
     stream: TcpStream,
     addr: SocketAddr,
 ) -> Result<(), Box<dyn Error>> {
-    let msgs = Framed::new(stream, BincodeCodec::new());
+    let peer_addr = stream.peer_addr()?;
+    let (stream_in, stream_out) = stream.into_split();
+    let msgs_in = FramedRead::new(stream_in, BincodeCodec::<Msg>::new());
+    let msgs_out = FramedWrite::new(stream_out, BincodeCodec::<Msg>::new());
 
     // Register our peer with state which internally sets up some channels.
-    let mut connection = Connection::new(&state, msgs).await?;
+    let (rx, peer) = ConnectionPeer::new(peer_addr);
 
     let peer_name = addr.to_string();
     let msg = format!("new connection from {}", &peer_name);
@@ -237,76 +213,102 @@ async fn process(
     // A client has connected
     {
         let mut state = state.borrow_mut();
-        state.router.peer_add(&connection);
+        state.connections.insert(peer_addr, peer.tx.clone());
+        state.router.peer_add(&peer);
     }
 
-    // Process incoming messages until our stream is exhausted by a disconnect.
-    loop {
-        monoio::select! {
-            // A message was received for the peer. Send it to the framed TCP
-            // stream.
-            msg = connection.rx.recv_async() => {
-                match msg {
-                    Ok(msg) => {
-                        let msg = (*msg).clone();
-                        connection.msgs.send(msg).await.inspect_err(|_e| {
-                        //connection.rx.close().await;
-                        }).context("while sending a message")?;
-                        if connection.rx.is_empty() {
-                            connection.msgs.flush().await?;
-                        }
-                        },
-                    Err(e) => tracing::error!("{e}"),
-                }
-            }
-            result = connection.msgs.next() =>
-                match result {
-                // A message was received from the peer's framed TCP stream.
-                Some(Ok(msg)) => {
-                    match msg {
-                        Msg::ChannelMsg(_) => {
-                            let msg = Arc::new(msg);
-                            let mut state = state.borrow_mut();
-                            let _count = state.router.forward(msg, connection.get_id());
-                        },
-                        Msg::ControlMsg(controlmsg) => {
-                            match controlmsg {
-                                ControlMsg::ChannelJoin(channel) => {
-                                    let mut state = state.borrow_mut();
-                                    state.router.attach(&channel, &connection)?;
-                                }
-                                ControlMsg::ChannelLeave(channel) => {
-                                    let mut state = state.borrow_mut();
-                                    state.router.detach(&channel, &connection)?;
-                                }
-                            }
-                        }
-                        _ => {
-                            tracing::error!("unhandled message: {:?}", msg);
-                        }
-                    }},
-                // An error occurred.
-                Some(Err(e)) => {
-                    tracing::error!(
-                        "an error occurred while processing messages for {}; error = {:?}",
-                        &peer_name,
-                        e
-                    );
-                }
-                // The stream has been exhausted.
-                None => break,
-            },
-        };
-    }
+    let peer_id = peer.get_id().clone();
+
+    let from_client_handle = monoio::spawn(from_client(state.clone(), msgs_in, peer));
+    let to_client_handle = monoio::spawn(to_client(rx, msgs_out));
+
+    //
+    monoio::select!(
+        _ = from_client_handle => {
+        },
+        _ = to_client_handle => {
+        }
+    );
 
     // If this section is reached it means that the client was disconnected!
     {
         let mut state = state.borrow_mut();
         state.connections.remove(&addr);
-        state.router.peer_remove(&connection);
+        state.router.peer_remove(&peer_id);
     }
 
     tracing::info!("{peer_name} disconnected");
 
     Ok(())
+}
+
+async fn from_client(
+    state: Rc<RefCell<Shared>>,
+    mut msgs_in: FramedRead<OwnedReadHalf<TcpStream>, BincodeCodec<Msg>>,
+    peer: ConnectionPeer,
+) -> Result<(), anyhow::Error> {
+    loop {
+        match msgs_in.next().await {
+            // A message was received from the peer's framed TCP stream.
+            Some(Ok(msg)) => match msg {
+                Msg::ChannelMsg(_) => {
+                    let msg = Arc::new(msg);
+                    let mut state = state.borrow_mut();
+                    let _count = state.router.forward(msg, peer.get_id());
+                }
+                Msg::ControlMsg(controlmsg) => match controlmsg {
+                    ControlMsg::ChannelJoin(channel) => {
+                        let mut state = state.borrow_mut();
+                        state.router.attach(&channel, &peer)?;
+                    }
+                    ControlMsg::ChannelLeave(channel) => {
+                        let mut state = state.borrow_mut();
+                        state.router.detach(&channel, &peer)?;
+                    }
+                },
+                _ => {
+                    tracing::error!("unhandled message: {:?}", msg);
+                }
+            },
+            // An error occurred.
+            Some(Err(e)) => {
+                tracing::error!(
+                    "an error occurred while processing messages for {:?}; error = {:?}",
+                    peer.get_id(),
+                    e
+                );
+                return Err(e.into());
+            }
+            // The stream has been exhausted.
+            None => break,
+        }
+    }
+
+    Ok(())
+}
+
+async fn to_client(
+    rx: Receiver<Arc<Msg>>,
+    mut msgs_out: FramedWrite<OwnedWriteHalf<TcpStream>, BincodeCodec<Msg>>,
+) -> Result<(), anyhow::Error> {
+    // A message was received for the peer. Send it to the framed TCP
+    // stream.
+    loop {
+        match rx.recv_async().await {
+            Ok(msg) => {
+                let msg = (*msg).clone();
+                msgs_out
+                    .send(msg)
+                    .await
+                    .inspect_err(|_e| {
+                        //connection.rx.close().await;
+                    })
+                    .context("while sending a message")?;
+                if rx.is_empty() {
+                    msgs_out.flush().await?;
+                }
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
 }

@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use anyhow::Error;
 
-use super::errors::TxError;
+//use super::errors::TxError;
 
 #[derive(Debug, Default)]
 pub struct Router {
@@ -24,8 +24,8 @@ impl Router {
             .insert(peer.get_id().clone(), peer.get_sink().clone());
     }
 
-    pub fn peer_remove(&mut self, peer: &dyn Peer) {
-        self.peers.remove(peer.get_id()).unwrap();
+    pub fn peer_remove(&mut self, peer_id: &PeerId) {
+        self.peers.remove(peer_id).unwrap();
     }
 
     pub fn channel_add(&mut self, channel: Channel) {
