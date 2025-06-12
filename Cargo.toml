@@ -8,6 +8,7 @@ edition = "2018"
 
 [dependencies]
 anyhow = "1.0.98"
+argh = "0.1.13"
 bincode = { version = "2.0.1", features = ["serde"] }
 bytes = { version = "1", features = ["serde"] }
 clap = { version = "4.5.39", features = ["env", "cargo"] }
@@ -16,7 +17,21 @@ flume = "0.11.1"
 futures = "0.3.31"
 local-sync = "0.1.1"
 mimalloc = { version = "0.1.46", default-features = false }
-monoio = { version = "0.2.4", features = ["splice", "flume", "tracing"] }
+monoio = { version = "0.2.4", default-features = false, features = [
+  "async-cancel",
+  "bytes",
+  "flume",
+  "io-uring",
+  "iouring",
+  #"legacy",
+  "macros",
+  "mio",
+  "monoio-macros",
+  "nix",
+  "splice",
+  "tracing",
+  "utils",
+] }
 monoio-codec = "0.3.4"
 serde = { version = "1.0.219", features = ["derive"] }
 slotmap = "1.0.7"

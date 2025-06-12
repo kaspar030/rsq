@@ -1,51 +1,77 @@
-#![warn(rust_2018_idioms)]
-
 use std::net::SocketAddr;
-
-use anyhow::{Error, Result};
 
 use rsq::client::Rsq;
 use rsq::messaging::channel::ChannelId;
 use rsq::messaging::msg::Msg;
 
-#[monoio::main(enable_timer = true)]
-async fn main() -> Result<(), Error> {
-    use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter};
+use argh::FromArgs;
+use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter};
+
+/// rsq benchmark consumer
+#[derive(FromArgs, Clone)]
+struct Args {
+    /// number of consumer threads
+    #[argh(option, default = "1")]
+    threads: usize,
+
+    /// channel_id
+    #[argh(option, default = "String::from(\"test_channel\")")]
+    channel_id: String,
+}
+
+fn main() -> std::io::Result<()> {
     // Configure a `tracing` subscriber
     tracing_subscriber::fmt()
-        // Filter what traces are displayed based on the RUST_LOG environment
-        // variable.
-        //
-        // Traces emitted by the example code will always be displayed. You
-        // can set `RUST_LOG=tokio=trace` to enable additional traces emitted by
-        // Tokio itself.
-        .with_env_filter(EnvFilter::from_default_env().add_directive("rsq=info".parse()?))
-        // Log events when `tracing` spans are created, entered, exited, or
-        // closed. When Tokio's internal tracing support is enabled (as
-        // described above), this can be used to track the lifecycle of spawned
-        // tasks on the Tokio runtime.
+        .with_env_filter(EnvFilter::from_default_env().add_directive("rsq=info".parse().unwrap()))
         .with_span_events(FmtSpan::FULL)
-        // Set this subscriber as the default, to collect all traces emitted by
-        // the program.
         .init();
 
+    let args: Args = argh::from_env();
+
+    let thread_count = args.threads;
+
+    let threads: Vec<_> = (0..thread_count)
+        .map(|thread| start_consumer_thread(thread, args.clone()))
+        .collect();
+
+    for thread in threads {
+        thread.join().unwrap();
+    }
+
+    Ok(())
+}
+
+fn start_consumer_thread(thread: usize, args: Args) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        let mut rt = monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
+            .with_entries(32768)
+            .build()
+            .unwrap();
+
+        rt.block_on(consumer(thread, args));
+    })
+}
+
+async fn consumer(thread: usize, args: Args) {
+    tracing::info!("thread {thread}: started");
     let addr = "127.0.0.1:6142".to_string();
-    let addr = addr.parse::<SocketAddr>()?;
+    let addr = addr.parse::<SocketAddr>().unwrap();
+
+    let channel_id = ChannelId(args.channel_id.replace("{thread}", &format!("{thread}")));
+
+    tracing::info!("thread {thread}: connecting...");
 
     let rsq = Rsq::new(&addr).await;
 
-    let mut args: Vec<String> = std::env::args().collect();
-    let channel_id = if args.len() >= 2 {
-        ChannelId(args.remove(1))
-    } else {
-        ChannelId("test_channel".into())
-    };
-
-    rsq.tx.send_async(Msg::channel_join(channel_id)).await?;
+    rsq.tx
+        .send_async(Msg::channel_join(channel_id))
+        .await
+        .unwrap();
 
     let mut i = 0;
     let mut bytes = 0usize;
     let mut start = std::time::Instant::now();
+    let mut expected = 0;
     loop {
         match rsq.rx.recv_async().await {
             Ok(Msg::ChannelMsg(msg)) => {
@@ -54,16 +80,23 @@ async fn main() -> Result<(), Error> {
                     let msg_str = std::str::from_utf8(msg.content()).unwrap();
                     match msg_str {
                         "start" => {
-                            i = 0;
-                            bytes = 0;
-                            start = std::time::Instant::now();
+                            if expected == 0 {
+                                i = 0;
+                                bytes = 0;
+                                start = std::time::Instant::now();
+                            }
+                            expected += 1;
                         }
                         "stop" => {
-                            let elapsed = start.elapsed();
-                            let msgs_per_sec = (i / elapsed.as_millis()) * 1000;
-                            let mb_per_sec =
-                                (bytes * 100 / elapsed.as_millis() as usize + 1) / (1024 * 1024);
-                            println!("{i} msgs / {bytes} in {elapsed:?} ({msgs_per_sec}/s, {mb_per_sec}MB/s)");
+                            expected -= 1;
+                            if expected == 0 {
+                                let elapsed = start.elapsed();
+                                let msgs_per_sec = i * 1000000 / (elapsed.as_micros() + 1);
+                                let mb_per_sec = (bytes * 1000000
+                                    / (elapsed.as_micros() as usize + 1))
+                                    / (1024 * 1024);
+                                tracing::info!("thread {thread}: {i} msgs / {bytes} in {elapsed:?} ({msgs_per_sec}/s, {mb_per_sec}MB/s)");
+                            }
                         }
                         _ => println!("unknown msg {msg_str}"),
                     }
@@ -72,14 +105,12 @@ async fn main() -> Result<(), Error> {
                     bytes += msg_content.len();
                 }
 
-                if i % 10000 == 0 {
-                    println!("i={i}");
+                if i % 100000 == 0 && i > 0 {
+                    tracing::info!("thread {thread}: i={i}");
                 }
             }
             Ok(_) => {}
             Err(_) => break,
         }
     }
-
-    Ok(())
 }

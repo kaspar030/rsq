@@ -23,8 +23,8 @@ pub struct Rsq {
 
 impl Rsq {
     pub async fn new(addr: &SocketAddr) -> Rsq {
-        let (out_tx, out_rx) = flume::bounded(1000);
-        let (in_tx, in_rx) = flume::bounded(1000);
+        let (out_tx, out_rx) = flume::bounded(10000);
+        let (in_tx, in_rx) = flume::bounded(10000);
         let (done_tx, done) = local_sync::oneshot::channel();
 
         monoio::spawn(Self::connect(*addr, in_tx, out_rx, done_tx));

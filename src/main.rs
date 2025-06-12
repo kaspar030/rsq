@@ -1,17 +1,10 @@
 //! A message broker in Rust.
 //!
 
+use argh::FromArgs;
 use fdlimit::{raise_fd_limit, Outcome};
-
-use flume::Receiver;
-use monoio::io::sink::Sink;
-use monoio::io::stream::Stream;
-use monoio::io::{OwnedReadHalf, OwnedWriteHalf, Splitable};
-use monoio::net::{TcpListener, TcpStream};
-
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::env;
 use std::error::Error;
 use std::net::SocketAddr;
 use std::rc::Rc;
@@ -19,13 +12,19 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use anyhow::Context;
+use flume::Receiver;
+use monoio::io::sink::Sink;
+use monoio::io::stream::Stream;
+use monoio::io::{OwnedReadHalf, OwnedWriteHalf, Splitable};
+use monoio::net::{TcpListener, TcpStream};
+use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter};
 
 use rsq::messaging::msg::{ControlMsg, Msg};
 use rsq::messaging::peer::{Peer, PeerHandle, PeerId};
 use rsq::messaging::router::Router;
 
 // Codec
-use monoio_codec::{Framed, FramedRead, FramedWrite};
+use monoio_codec::{FramedRead, FramedWrite};
 use rsq::monoio_bincode::BincodeCodec;
 
 #[global_allocator]
@@ -64,26 +63,40 @@ static OPEN_CONNECTIONS: AtomicU64 = AtomicU64::new(0);
 //     count: AtomicUsize::new(0),
 // };
 
-#[monoio::main(enable_timer = true)]
-async fn main() -> Result<(), Box<dyn Error>> {
-    use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter};
-    // Configure a `tracing` subscriber
+/// rsq server
+#[derive(FromArgs, Clone)]
+struct Args {
+    /// listen address
+    #[argh(option, default = "String::from(\"0.0.0.0:6142\")")]
+    addr: String,
+}
+
+fn main() -> std::result::Result<(), Box<dyn Error>> {
     tracing_subscriber::fmt()
-        // Filter what traces are displayed based on the RUST_LOG environment
-        // variable.
-        //
-        // Traces emitted by the example code will always be displayed. You
-        // can set `RUST_LOG=tokio=trace` to enable additional traces emitted by
-        // Tokio itself.
         .with_env_filter(EnvFilter::from_default_env().add_directive("rsq=info".parse()?))
-        // Log events when `tracing` spans are created, entered, exited, or
-        // closed. When Tokio's internal tracing support is enabled (as
-        // described above), this can be used to track the lifecycle of spawned
-        // tasks on the Tokio runtime.
         .with_span_events(FmtSpan::FULL)
-        // Set this subscriber as the default, to collect all traces emitted by
-        // the program.
         .init();
+
+    let args: Args = argh::from_env();
+
+    let mut rt = monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
+        .with_entries(32768)
+        .build()
+        .unwrap();
+
+    rt.block_on(server(args))
+}
+
+async fn server(args: Args) -> Result<(), Box<dyn Error>> {
+    // figure out possible number of connections
+    let max_connections = if let Outcome::LimitRaised { from: _, to } = raise_fd_limit()? {
+        to - 64
+    } else {
+        512
+    };
+
+    tracing::info!("server listening on {}", args.addr);
+    tracing::info!("server accepting up to {} connections", max_connections);
 
     // Create the shared state.
     //
@@ -92,22 +105,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // client connection.
     let state = Rc::new(RefCell::new(Shared::new()));
 
-    let addr = env::args()
-        .nth(1)
-        .unwrap_or_else(|| "127.0.0.1:6142".to_string());
-
-    // figure out possible number of connections
-    let max_connections = if let Outcome::LimitRaised { from: _, to } = raise_fd_limit()? {
-        to - 64
-    } else {
-        512
-    };
-
     // Bind a TCP listener to the socket address.
-    let listener = TcpListener::bind(&addr)?;
-
-    tracing::info!("server running on {}", addr);
-    tracing::info!("server accepting up to {} connections", max_connections);
+    let listener = TcpListener::bind(&args.addr)?;
 
     // std::thread::spawn(|| loop {
     //     std::thread::sleep(Duration::from_secs(1));
@@ -200,7 +199,7 @@ async fn process(
 ) -> Result<(), Box<dyn Error>> {
     let peer_addr = stream.peer_addr()?;
     let (stream_in, stream_out) = stream.into_split();
-    let msgs_in = FramedRead::new(stream_in, BincodeCodec::<Msg>::new());
+    let msgs_in = FramedRead::with_capacity(stream_in, BincodeCodec::<Msg>::new(), 128 * 1024);
     let msgs_out = FramedWrite::new(stream_out, BincodeCodec::<Msg>::new());
 
     // Register our peer with state which internally sets up some channels.
@@ -224,9 +223,15 @@ async fn process(
 
     //
     monoio::select!(
-        _ = from_client_handle => {
+        e = from_client_handle => {
+            if let Err(e) = e {
+                tracing::error!("{peer_name}: {e}");
+            }
         },
-        _ = to_client_handle => {
+        e = to_client_handle => {
+            if let Err(e) = e {
+                tracing::error!("{peer_name}: {e}");
+            }
         }
     );
 
