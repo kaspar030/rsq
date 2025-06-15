@@ -1,31 +1,31 @@
 use super::channel::ChannelId;
 use super::peer::PeerId;
 use super::util::hash;
-use bytes::Bytes;
 
+use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
-#[derive(PartialEq, Clone, Debug, Eq, Hash, Serialize, Deserialize)]
+#[derive(PartialEq, Clone, Debug, Eq, Hash, Serialize, Deserialize, Encode, Decode)]
 pub enum Msg {
     ChannelMsg(ChannelMsg),
     ControlMsg(ControlMsg),
     StatusMsg(StatusMsg),
 }
 
-#[derive(PartialEq, Eq, Hash, Clone, Debug, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Hash, Clone, Debug, Serialize, Deserialize, Encode, Decode)]
 pub struct ChannelMsg {
     sender: PeerId,
     channel: ChannelId,
-    content: Bytes,
+    content: Vec<u8>,
 }
 
-#[derive(PartialEq, Eq, Hash, Clone, Debug, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Hash, Clone, Debug, Serialize, Deserialize, Encode, Decode)]
 pub enum ControlMsg {
     ChannelJoin(ChannelId),
     ChannelLeave(ChannelId),
 }
 
-#[derive(PartialEq, Eq, Hash, Clone, Debug, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Hash, Clone, Debug, Serialize, Deserialize, Encode, Decode)]
 pub enum StatusMsg {
     Connecting,
     Connected,
@@ -33,7 +33,7 @@ pub enum StatusMsg {
 }
 
 impl ChannelMsg {
-    pub fn new(sender: PeerId, channel: ChannelId, content: Bytes) -> Self {
+    pub fn new(sender: PeerId, channel: ChannelId, content: Vec<u8>) -> Self {
         Self {
             sender,
             channel,
@@ -47,13 +47,13 @@ impl ChannelMsg {
     pub fn channel(&self) -> &ChannelId {
         &self.channel
     }
-    pub fn content(&self) -> &Bytes {
+    pub fn content(&self) -> &Vec<u8> {
         &self.content
     }
 }
 
 impl Msg {
-    pub fn new_channel_msg(sender: PeerId, channel: ChannelId, content: Bytes) -> Self {
+    pub fn new_channel_msg(sender: PeerId, channel: ChannelId, content: Vec<u8>) -> Self {
         Self::ChannelMsg(ChannelMsg::new(sender, channel, content))
     }
 

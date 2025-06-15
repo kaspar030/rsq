@@ -1,3 +1,4 @@
+use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -5,7 +6,7 @@ use std::sync::Arc;
 use super::msg::Msg;
 use super::peer::{Peer, PeerHandle, PeerId};
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Encode, Decode)]
 pub struct ChannelId(pub String);
 
 #[derive(Debug)]

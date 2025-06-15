@@ -1,6 +1,6 @@
+use bincode::{Decode, Encode};
 use bytes::{BufMut, BytesMut};
 use monoio_codec::{length_delimited::LengthDelimitedCodec, Decoded, Decoder, Encoder};
-use serde::{Deserialize, Serialize};
 use std::{io, marker::PhantomData};
 
 pub struct BincodeCodec<T> {
@@ -18,7 +18,7 @@ impl<T> BincodeCodec<T> {
     }
 }
 
-impl<T: for<'a> Deserialize<'a>> Decoder for BincodeCodec<T> {
+impl<T: Decode<()>> Decoder for BincodeCodec<T> {
     type Item = T;
 
     type Error = io::Error;
@@ -30,7 +30,7 @@ impl<T: for<'a> Deserialize<'a>> Decoder for BincodeCodec<T> {
         match self.inner.decode(src) {
             Ok(Decoded::Some(bytes)) => {
                 let (data, _size) =
-                    bincode::serde::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
+                    bincode::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
                 Ok(Decoded::Some(data))
             }
             Ok(Decoded::Insufficient) => Ok(Decoded::Insufficient),
@@ -51,17 +51,18 @@ impl bincode::enc::write::Writer for ByteMutBincodeWriter<'_> {
     }
 }
 
-impl<T: Serialize> Encoder<T> for BincodeCodec<T> {
+impl<T: Encode> Encoder<T> for BincodeCodec<T> {
     type Error = io::Error;
 
     fn encode(&mut self, data: T, dst: &mut BytesMut) -> Result<(), io::Error> {
+        dst.reserve(4);
         let mut payload = dst.split_off(dst.len() + 4);
 
         let writer = ByteMutBincodeWriter {
             bytes: &mut payload,
         };
 
-        bincode::serde::encode_into_writer(data, writer, bincode::config::standard())
+        bincode::encode_into_writer(data, writer, bincode::config::standard())
             .expect("encoding went well");
 
         dst.put_u32(payload.len() as u32);

@@ -199,7 +199,7 @@ async fn process(
 ) -> Result<(), Box<dyn Error>> {
     let peer_addr = stream.peer_addr()?;
     let (stream_in, stream_out) = stream.into_split();
-    let msgs_in = FramedRead::with_capacity(stream_in, BincodeCodec::<Msg>::new(), 128 * 1024);
+    let msgs_in = FramedRead::new(stream_in, BincodeCodec::<Msg>::new());
     let msgs_out = FramedWrite::new(stream_out, BincodeCodec::<Msg>::new());
 
     // Register our peer with state which internally sets up some channels.
@@ -302,6 +302,9 @@ async fn to_client(
         match rx.recv_async().await {
             Ok(msg) => {
                 let msg = (*msg).clone();
+                if let Msg::ChannelMsg(ref msg) = &msg {
+                    msgs_out.write_buffer_mut().reserve(msg.content().len());
+                }
                 msgs_out
                     .send(msg)
                     .await

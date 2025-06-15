@@ -1,12 +1,13 @@
 use std::sync::Arc;
 
+use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
 use super::msg::Msg;
 
 pub type PeerHandle = flume::Sender<Arc<Msg>>;
 
-#[derive(PartialEq, Eq, Clone, Debug, Hash, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Clone, Debug, Hash, Serialize, Deserialize, Encode, Decode)]
 pub struct PeerId {
     id: String,
 }
