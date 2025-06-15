@@ -263,11 +263,14 @@ async fn from_client(
                 //     bytes.len(),
                 //     bytes.capacity()
                 // );
-                let msg_slice = &mut bytes[4..];
-                let (msg, header_size) =
-                    bincode::decode_from_slice::<Msg, _>(msg_slice, bincode::config::standard())
-                        .unwrap();
                 //tracing::info!("header_size:{:?}", header_size);
+                let msg_slice = &bytes[4..];
+                let (msg, hdr_len) = bincode::borrow_decode_from_slice::<Msg, _>(
+                    msg_slice,
+                    bincode::config::standard(),
+                )
+                .unwrap();
+                tracing::info!("hdr_len={hdr_len}");
             }
             Some(Err(e)) => {
                 tracing::info!("from_client error: {e}");

@@ -2,7 +2,7 @@ use super::channel::ChannelId;
 use super::peer::PeerId;
 use super::util::hash;
 
-use bincode::{Decode, Encode};
+use bincode::{BorrowDecode, Decode, Encode};
 use serde::{Deserialize, Serialize};
 
 #[derive(PartialEq, Clone, Debug, Eq, Hash, Serialize, Deserialize, Encode, Decode)]
@@ -12,11 +12,49 @@ pub enum Msg {
     StatusMsg(StatusMsg),
 }
 
-#[derive(PartialEq, Eq, Hash, Clone, Debug, Serialize, Deserialize, Encode, Decode)]
+#[derive(PartialEq, Eq, Hash, Clone, Debug, Serialize, Deserialize, Encode)]
 pub struct ChannelMsg {
     sender: PeerId,
     channel: ChannelId,
     content: Vec<u8>,
+}
+
+impl<'a, Context> BorrowDecode<'a, Context> for ChannelMsg {
+    fn borrow_decode<D: bincode::de::Decoder<Context = Context>>(
+        decoder: &mut D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        let ChannelMsgHdr { sender, channel } = ChannelMsgHdr::decode(decoder)?;
+
+        let res = ChannelMsg {
+            sender,
+            channel,
+            content: vec![],
+        };
+
+        Ok(res)
+    }
+}
+
+impl<Context> Decode<Context> for ChannelMsg {
+    fn decode<D: bincode::de::Decoder<Context = Context>>(
+        decoder: &mut D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        let ChannelMsgHdr { sender, channel } = ChannelMsgHdr::decode(decoder)?;
+
+        let res = ChannelMsg {
+            sender,
+            channel,
+            content: vec![],
+        };
+
+        Ok(res)
+    }
+}
+
+#[derive(PartialEq, Eq, Hash, Clone, Debug, Serialize, Deserialize, Encode, Decode)]
+pub struct ChannelMsgHdr {
+    sender: PeerId,
+    channel: ChannelId,
 }
 
 #[derive(PartialEq, Eq, Hash, Clone, Debug, Serialize, Deserialize, Encode, Decode)]

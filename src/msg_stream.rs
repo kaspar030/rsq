@@ -3,17 +3,21 @@ use std::{convert::TryInto, io::ErrorKind};
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use monoio::{
     buf::{IoBufMut, SliceMut},
-    io::{AsyncReadRent, AsyncReadRentExt},
+    io::{AsyncReadRent, AsyncReadRentExt, BufReader},
     BufResult,
 };
 
+use crate::messaging::msg::{ChannelMsgHdr, Msg};
+
 pub struct FrameDecoder<IO> {
-    io: IO,
+    io: BufReader<IO>,
 }
 
 impl<IO> FrameDecoder<IO> {
     pub fn new(io: IO) -> Self {
-        Self { io }
+        Self {
+            io: BufReader::new(io),
+        }
     }
 
     pub async fn next(&mut self) -> Option<std::io::Result<BytesMut>>
@@ -28,7 +32,6 @@ impl<IO> FrameDecoder<IO> {
             Err(e) => return Some(Err(e)),
             Ok(n) => n,
         };
-        //tracing::info!("1. got nread={nread}");
 
         let size = { u32::from_be_bytes(buf[0..4].try_into().unwrap()) };
 
@@ -55,8 +58,6 @@ impl<IO> FrameDecoder<IO> {
             Err(e) => return Some(Err(e)),
             Ok(n) => n,
         } + nread;
-
-        //tracing::info!("3. got nread={nread}");
 
         Some(Ok(buf))
     }
