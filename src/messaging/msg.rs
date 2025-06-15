@@ -5,12 +5,89 @@ use super::util::hash;
 use bincode::{BorrowDecode, Decode, Encode};
 use serde::{Deserialize, Serialize};
 
-#[derive(PartialEq, Clone, Debug, Eq, Hash, Serialize, Deserialize, Encode, Decode)]
+#[derive(PartialEq, Clone, Debug, Eq, Hash, Serialize, Deserialize, Encode)]
 pub enum Msg {
     ChannelMsg(ChannelMsg),
     ControlMsg(ControlMsg),
     StatusMsg(StatusMsg),
 }
+
+impl Decode<bool> for Msg {
+    fn decode<D: bincode::de::Decoder<Context = bool>>(
+        decoder: &mut D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        let variant_index = <u32 as ::bincode::Decode<bool>>::decode(decoder)?;
+        match variant_index {
+            0u32 => core::result::Result::Ok(Self::ChannelMsg {
+                0: ::bincode::Decode::<bool>::decode(decoder)?,
+            }),
+            1u32 => core::result::Result::Ok(Self::ControlMsg {
+                0: ::bincode::Decode::<bool>::decode(decoder)?,
+            }),
+            2u32 => core::result::Result::Ok(Self::StatusMsg {
+                0: ::bincode::Decode::<bool>::decode(decoder)?,
+            }),
+            variant => {
+                core::result::Result::Err(::bincode::error::DecodeError::UnexpectedVariant {
+                    found: variant,
+                    type_name: "Msg",
+                    allowed: &::bincode::error::AllowedEnumVariants::Range { min: 0, max: 2 },
+                })
+            }
+        }
+    }
+}
+
+// impl ::bincode::Decode<__Context> for Msg {
+//     fn decode<__D: ::bincode::de::Decoder<Context = __Context>>(
+//         decoder: &mut __D,
+//     ) -> core::result::Result<Self, ::bincode::error::DecodeError> {
+//         let variant_index = <u32 as ::bincode::Decode<__D::Context>>::decode(decoder)?;
+//         match variant_index {
+//             0u32 => core::result::Result::Ok(Self::ChannelMsg {
+//                 0: ::bincode::Decode::<__D::Context>::decode(decoder)?,
+//             }),
+//             1u32 => core::result::Result::Ok(Self::ControlMsg {
+//                 0: ::bincode::Decode::<__D::Context>::decode(decoder)?,
+//             }),
+//             2u32 => core::result::Result::Ok(Self::StatusMsg {
+//                 0: ::bincode::Decode::<__D::Context>::decode(decoder)?,
+//             }),
+//             variant => {
+//                 core::result::Result::Err(::bincode::error::DecodeError::UnexpectedVariant {
+//                     found: variant,
+//                     type_name: "Msg",
+//                     allowed: &::bincode::error::AllowedEnumVariants::Range { min: 0, max: 2 },
+//                 })
+//             }
+//         }
+//     }
+// }
+// impl<'__de, __Context> ::bincode::BorrowDecode<'__de, __Context> for Msg {
+//     fn borrow_decode<__D: ::bincode::de::BorrowDecoder<'__de, Context = __Context>>(
+//         decoder: &mut __D,
+//     ) -> core::result::Result<Self, ::bincode::error::DecodeError> {
+//         let variant_index = <u32 as ::bincode::Decode<__D::Context>>::decode(decoder)?;
+//         match variant_index {
+//             0u32 => core::result::Result::Ok(Self::ChannelMsg {
+//                 0: ::bincode::BorrowDecode::<__D::Context>::borrow_decode(decoder)?,
+//             }),
+//             1u32 => core::result::Result::Ok(Self::ControlMsg {
+//                 0: ::bincode::BorrowDecode::<__D::Context>::borrow_decode(decoder)?,
+//             }),
+//             2u32 => core::result::Result::Ok(Self::StatusMsg {
+//                 0: ::bincode::BorrowDecode::<__D::Context>::borrow_decode(decoder)?,
+//             }),
+//             variant => {
+//                 core::result::Result::Err(::bincode::error::DecodeError::UnexpectedVariant {
+//                     found: variant,
+//                     type_name: "Msg",
+//                     allowed: &::bincode::error::AllowedEnumVariants::Range { min: 0, max: 2 },
+//                 })
+//             }
+//         }
+//     }
+// }
 
 #[derive(PartialEq, Eq, Hash, Clone, Debug, Serialize, Deserialize, Encode)]
 pub struct ChannelMsg {
@@ -19,35 +96,25 @@ pub struct ChannelMsg {
     content: Vec<u8>,
 }
 
-impl<'a, Context> BorrowDecode<'a, Context> for ChannelMsg {
-    fn borrow_decode<D: bincode::de::Decoder<Context = Context>>(
+impl Decode<bool> for ChannelMsg {
+    fn decode<D: bincode::de::Decoder<Context = bool>>(
         decoder: &mut D,
     ) -> Result<Self, bincode::error::DecodeError> {
-        let ChannelMsgHdr { sender, channel } = ChannelMsgHdr::decode(decoder)?;
-
-        let res = ChannelMsg {
-            sender,
-            channel,
-            content: vec![],
-        };
-
-        Ok(res)
-    }
-}
-
-impl<Context> Decode<Context> for ChannelMsg {
-    fn decode<D: bincode::de::Decoder<Context = Context>>(
-        decoder: &mut D,
-    ) -> Result<Self, bincode::error::DecodeError> {
-        let ChannelMsgHdr { sender, channel } = ChannelMsgHdr::decode(decoder)?;
-
-        let res = ChannelMsg {
-            sender,
-            channel,
-            content: vec![],
-        };
-
-        Ok(res)
+        if *decoder.context() {
+            let res = ChannelMsg {
+                sender: ::bincode::Decode::<bool>::decode(decoder)?,
+                channel: ::bincode::Decode::<bool>::decode(decoder)?,
+                content: vec![],
+            };
+            Ok(res)
+        } else {
+            let res = ChannelMsg {
+                sender: ::bincode::Decode::<bool>::decode(decoder)?,
+                channel: ::bincode::Decode::<bool>::decode(decoder)?,
+                content: ::bincode::Decode::<bool>::decode(decoder)?,
+            };
+            Ok(res)
+        }
     }
 }
 

@@ -18,7 +18,7 @@ impl<T> BincodeCodec<T> {
     }
 }
 
-impl<T: Decode<()>> Decoder for BincodeCodec<T> {
+impl<T: Decode<bool>> Decoder for BincodeCodec<T> {
     type Item = Arc<T>;
 
     type Error = io::Error;
@@ -29,8 +29,15 @@ impl<T: Decode<()>> Decoder for BincodeCodec<T> {
     ) -> Result<monoio_codec::Decoded<Self::Item>, Self::Error> {
         match self.inner.decode(src) {
             Ok(Decoded::Some(bytes)) => {
-                let (data, _size) =
-                    bincode::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
+                let (data, size) = bincode::decode_from_slice_with_context(
+                    &bytes,
+                    bincode::config::standard(),
+                    false,
+                )
+                .unwrap();
+
+                //tracing::info!("size:{size}");
+
                 Ok(Decoded::Some(data))
             }
             Ok(Decoded::Insufficient) => Ok(Decoded::Insufficient),

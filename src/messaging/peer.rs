@@ -1,11 +1,8 @@
-use std::sync::Arc;
-
 use bincode::{Decode, Encode};
+use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
-use super::msg::Msg;
-
-pub type PeerHandle = flume::Sender<Arc<Msg>>;
+pub type PeerHandle = flume::Sender<Bytes>;
 
 #[derive(PartialEq, Eq, Clone, Debug, Hash, Serialize, Deserialize, Encode, Decode)]
 pub struct PeerId {

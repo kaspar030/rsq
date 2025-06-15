@@ -1,10 +1,9 @@
 use super::channel::{Channel, ChannelId};
-use super::msg::Msg;
 use super::peer::{Peer, PeerHandle, PeerId};
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use anyhow::Error;
+use bytes::Bytes;
 
 //use super::errors::TxError;
 
@@ -43,24 +42,21 @@ impl Router {
         })
     }
 
-    pub fn forward(&mut self, msg: Arc<Msg>, sender: &PeerId) -> usize {
-        let channel = if let Msg::ChannelMsg(msg) = msg.as_ref() {
-            self.channel_get_or_add(msg.channel())
-        } else {
-            unreachable!();
-        };
+    pub fn forward(&mut self, payload: Bytes, channel_id: &ChannelId, sender: &PeerId) -> usize {
+        let channel = self.channel_get_or_add(channel_id);
 
-        channel.forward(msg, sender)
+        channel.forward(payload, sender)
     }
 
-    pub async fn forward_async(&mut self, msg: Arc<Msg>, sender: &PeerId) -> usize {
-        let channel = if let Msg::ChannelMsg(msg) = msg.as_ref() {
-            self.channel_get_or_add(msg.channel())
-        } else {
-            unreachable!();
-        };
+    pub async fn forward_async(
+        &mut self,
+        payload: Bytes,
+        channel_id: &ChannelId,
+        sender: &PeerId,
+    ) -> usize {
+        let channel = self.channel_get_or_add(channel_id);
 
-        channel.forward_async(msg, sender).await
+        channel.forward_async(payload, sender).await
     }
 
     pub fn attach(&mut self, channel_id: &ChannelId, peer: &dyn Peer) -> Result<(), Error> {

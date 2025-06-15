@@ -24,7 +24,7 @@ impl<IO> FrameDecoder<IO> {
     where
         IO: AsyncReadRent,
     {
-        let buf = BytesMut::with_capacity(4096);
+        let buf = BytesMut::with_capacity(8192);
         let (res, mut buf) = self.read_exact_n(buf, 4).await;
         let nread = match res {
             Ok(0) => return None,

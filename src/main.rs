@@ -2,21 +2,17 @@
 //!
 
 use argh::FromArgs;
+use bytes::Bytes;
 use fdlimit::{raise_fd_limit, Outcome};
-use monoio::buf::IoBuf;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::error::Error;
 use std::net::SocketAddr;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
 
-use anyhow::Context;
 use flume::Receiver;
-use monoio::io::sink::Sink;
-use monoio::io::stream::Stream;
-use monoio::io::{OwnedReadHalf, OwnedWriteHalf, Splitable};
+use monoio::io::{AsyncWriteRent, AsyncWriteRentExt, OwnedReadHalf, OwnedWriteHalf, Splitable};
 use monoio::net::{TcpListener, TcpStream};
 use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter};
 
@@ -25,12 +21,15 @@ use rsq::messaging::peer::{Peer, PeerHandle, PeerId};
 use rsq::messaging::router::Router;
 
 // Codec
-use monoio_codec::{FramedRead, FramedWrite};
+use monoio_codec::FramedWrite;
 use rsq::monoio_bincode::BincodeCodec;
 use rsq::msg_stream::FrameDecoder;
 
+// #[global_allocator]
+// static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+#[cfg(feature = "dhat-heap")]
 #[global_allocator]
-static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+static ALLOC: dhat::Alloc = dhat::Alloc;
 
 static OPEN_CONNECTIONS: AtomicU64 = AtomicU64::new(0);
 
@@ -142,7 +141,7 @@ async fn server(args: Args) -> Result<(), Box<dyn Error>> {
 }
 
 /// Shorthand for the transmit half of the message channel.
-type PeerTx = flume::Sender<Arc<Msg>>;
+type PeerTx = flume::Sender<Bytes>;
 
 /// Data that is shared between all client connections
 struct Shared {
@@ -172,7 +171,7 @@ impl Shared {
 
 impl ConnectionPeer {
     /// Create a new instance of `Connection`.
-    fn new(peer_addr: SocketAddr) -> (Receiver<Arc<Msg>>, ConnectionPeer) {
+    fn new(peer_addr: SocketAddr) -> (Receiver<Bytes>, ConnectionPeer) {
         // Generate peer id. using the socket address for now.
         let peer_id = PeerId::new(&peer_addr.to_string());
 
@@ -203,7 +202,6 @@ async fn process(
     let (stream_in, stream_out) = stream.into_split();
     //let msgs_in = FramedRead::new(stream_in, BincodeCodec::<Msg>::new());
     let msgs_in = FrameDecoder::new(stream_in);
-    let msgs_out = FramedWrite::new(stream_out, BincodeCodec::<Msg>::new());
 
     // Register our peer with state which internally sets up some channels.
     let (rx, peer) = ConnectionPeer::new(peer_addr);
@@ -222,7 +220,7 @@ async fn process(
     let peer_id = peer.get_id().clone();
 
     let from_client_handle = monoio::spawn(from_client(state.clone(), msgs_in, peer));
-    let to_client_handle = monoio::spawn(to_client(rx, msgs_out));
+    let to_client_handle = monoio::spawn(to_client(rx, stream_out));
 
     //
     monoio::select!(
@@ -257,20 +255,46 @@ async fn from_client(
 ) -> Result<(), anyhow::Error> {
     loop {
         match msgs_in.next().await {
-            Some(Ok(mut bytes)) => {
+            Some(Ok(bytes)) => {
                 // tracing::info!(
                 //     "4. from_client: len:{} cap:{}",
                 //     bytes.len(),
                 //     bytes.capacity()
                 // );
                 //tracing::info!("header_size:{:?}", header_size);
+                // Deserialize message header
                 let msg_slice = &bytes[4..];
-                let (msg, hdr_len) = bincode::borrow_decode_from_slice::<Msg, _>(
+                let (msg, _hdr_len) = bincode::decode_from_slice_with_context::<bool, Msg, _>(
                     msg_slice,
                     bincode::config::standard(),
+                    true,
                 )
                 .unwrap();
-                tracing::info!("hdr_len={hdr_len}");
+
+                // handle message
+                match msg {
+                    Msg::ChannelMsg(msg) => {
+                        //tracing::info!("msg len: {}", msg.content().len());
+                        let mut state = state.borrow_mut();
+                        let _count =
+                            state
+                                .router
+                                .forward(bytes.freeze(), msg.channel(), peer.get_id());
+                    }
+                    Msg::ControlMsg(controlmsg) => match controlmsg {
+                        ControlMsg::ChannelJoin(channel) => {
+                            let mut state = state.borrow_mut();
+                            state.router.attach(&channel, &peer)?;
+                        }
+                        ControlMsg::ChannelLeave(channel) => {
+                            let mut state = state.borrow_mut();
+                            state.router.detach(&channel, &peer)?;
+                        }
+                    },
+                    _ => {
+                        tracing::error!("unhandled message: {:?}", msg);
+                    }
+                };
             }
             Some(Err(e)) => {
                 tracing::info!("from_client error: {e}");
@@ -284,26 +308,18 @@ async fn from_client(
 }
 
 async fn to_client(
-    rx: Receiver<Arc<Msg>>,
-    mut msgs_out: FramedWrite<OwnedWriteHalf<TcpStream>, BincodeCodec<Msg>>,
+    rx: Receiver<Bytes>,
+    mut writer: OwnedWriteHalf<TcpStream>,
 ) -> Result<(), anyhow::Error> {
     // A message was received for the peer. Send it to the framed TCP
     // stream.
     loop {
         match rx.recv_async().await {
-            Ok(msg) => {
-                if let Msg::ChannelMsg(ref msg) = &*msg {
-                    msgs_out.write_buffer_mut().reserve(msg.content().len());
-                }
-                msgs_out
-                    .send(msg.clone())
-                    .await
-                    .inspect_err(|_e| {
-                        //connection.rx.close().await;
-                    })
-                    .context("while sending a message")?;
+            Ok(payload) => {
+                let (res, _buf) = writer.write_all(payload).await;
+                let _ = res?;
                 if rx.is_empty() {
-                    msgs_out.flush().await?;
+                    writer.flush().await?;
                 }
             }
             Err(e) => return Err(e.into()),
