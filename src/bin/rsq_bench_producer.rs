@@ -3,6 +3,7 @@
 use std::error::Error;
 use std::mem::swap;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use argh::FromArgs;
@@ -87,20 +88,20 @@ async fn producer(thread: usize, args: Args) -> Result<Stats, Box<dyn Error>> {
 
     let rsq = Rsq::new(&addr).await;
 
-    let msg = Msg::new_channel_msg(
+    let msg = Arc::new(Msg::new_channel_msg(
         PeerId::new("sender"),
         channel_id.clone(),
         "a".repeat(args.msg_size).into(),
-    );
+    ));
 
     tracing::info!("thread {thread}: starting...");
 
     rsq.tx
-        .send_async(Msg::new_channel_msg(
+        .send_async(Arc::new(Msg::new_channel_msg(
             PeerId::new("sender"),
             channel_id.clone(),
             "start".into(),
-        ))
+        )))
         .await?;
 
     let start = std::time::Instant::now();
@@ -118,11 +119,11 @@ async fn producer(thread: usize, args: Args) -> Result<Stats, Box<dyn Error>> {
     }
     tracing::info!(".");
     rsq.tx
-        .send_async(Msg::new_channel_msg(
+        .send_async(Arc::new(Msg::new_channel_msg(
             PeerId::new("sender"),
             channel_id,
             "stop".into(),
-        ))
+        )))
         .await
         .unwrap();
 

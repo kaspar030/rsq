@@ -3,6 +3,7 @@
 
 use argh::FromArgs;
 use fdlimit::{raise_fd_limit, Outcome};
+use monoio::buf::IoBuf;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::error::Error;
@@ -26,6 +27,7 @@ use rsq::messaging::router::Router;
 // Codec
 use monoio_codec::{FramedRead, FramedWrite};
 use rsq::monoio_bincode::BincodeCodec;
+use rsq::msg_stream::FrameDecoder;
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -199,7 +201,8 @@ async fn process(
 ) -> Result<(), Box<dyn Error>> {
     let peer_addr = stream.peer_addr()?;
     let (stream_in, stream_out) = stream.into_split();
-    let msgs_in = FramedRead::new(stream_in, BincodeCodec::<Msg>::new());
+    //let msgs_in = FramedRead::new(stream_in, BincodeCodec::<Msg>::new());
+    let msgs_in = FrameDecoder::new(stream_in);
     let msgs_out = FramedWrite::new(stream_out, BincodeCodec::<Msg>::new());
 
     // Register our peer with state which internally sets up some channels.
@@ -249,42 +252,27 @@ async fn process(
 
 async fn from_client(
     state: Rc<RefCell<Shared>>,
-    mut msgs_in: FramedRead<OwnedReadHalf<TcpStream>, BincodeCodec<Msg>>,
+    mut msgs_in: FrameDecoder<OwnedReadHalf<TcpStream>>,
     peer: ConnectionPeer,
 ) -> Result<(), anyhow::Error> {
     loop {
         match msgs_in.next().await {
-            // A message was received from the peer's framed TCP stream.
-            Some(Ok(msg)) => match msg {
-                Msg::ChannelMsg(_) => {
-                    let msg = Arc::new(msg);
-                    let mut state = state.borrow_mut();
-                    let _count = state.router.forward(msg, peer.get_id());
-                }
-                Msg::ControlMsg(controlmsg) => match controlmsg {
-                    ControlMsg::ChannelJoin(channel) => {
-                        let mut state = state.borrow_mut();
-                        state.router.attach(&channel, &peer)?;
-                    }
-                    ControlMsg::ChannelLeave(channel) => {
-                        let mut state = state.borrow_mut();
-                        state.router.detach(&channel, &peer)?;
-                    }
-                },
-                _ => {
-                    tracing::error!("unhandled message: {:?}", msg);
-                }
-            },
-            // An error occurred.
-            Some(Err(e)) => {
-                tracing::error!(
-                    "an error occurred while processing messages for {:?}; error = {:?}",
-                    peer.get_id(),
-                    e
-                );
-                return Err(e.into());
+            Some(Ok(mut bytes)) => {
+                // tracing::info!(
+                //     "4. from_client: len:{} cap:{}",
+                //     bytes.len(),
+                //     bytes.capacity()
+                // );
+                let msg_slice = &mut bytes[4..];
+                let (msg, header_size) =
+                    bincode::decode_from_slice::<Msg, _>(msg_slice, bincode::config::standard())
+                        .unwrap();
+                //tracing::info!("header_size:{:?}", header_size);
             }
-            // The stream has been exhausted.
+            Some(Err(e)) => {
+                tracing::info!("from_client error: {e}");
+                break;
+            }
             None => break,
         }
     }
@@ -301,12 +289,11 @@ async fn to_client(
     loop {
         match rx.recv_async().await {
             Ok(msg) => {
-                let msg = (*msg).clone();
-                if let Msg::ChannelMsg(ref msg) = &msg {
+                if let Msg::ChannelMsg(ref msg) = &*msg {
                     msgs_out.write_buffer_mut().reserve(msg.content().len());
                 }
                 msgs_out
-                    .send(msg)
+                    .send(msg.clone())
                     .await
                     .inspect_err(|_e| {
                         //connection.rx.close().await;

@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, sync::Arc};
 
 use rsq::client::Rsq;
 use rsq::messaging::channel::ChannelId;
@@ -64,7 +64,7 @@ async fn consumer(thread: usize, args: Args) {
     let rsq = Rsq::new(&addr).await;
 
     rsq.tx
-        .send_async(Msg::channel_join(channel_id))
+        .send_async(Arc::new(Msg::channel_join(channel_id)))
         .await
         .unwrap();
 
@@ -74,42 +74,44 @@ async fn consumer(thread: usize, args: Args) {
     let mut expected = 0;
     loop {
         match rsq.rx.recv_async().await {
-            Ok(Msg::ChannelMsg(msg)) => {
-                let msg_content = msg.content();
-                if msg_content.len() <= 5 {
-                    let msg_str = std::str::from_utf8(msg.content()).unwrap();
-                    match msg_str {
-                        "start" => {
-                            if expected == 0 {
-                                i = 0;
-                                bytes = 0;
-                                start = std::time::Instant::now();
+            Ok(msg) => match &*msg {
+                Msg::ChannelMsg(msg) => {
+                    let msg_content = msg.content();
+                    if msg_content.len() <= 5 {
+                        let msg_str = std::str::from_utf8(msg.content()).unwrap();
+                        match msg_str {
+                            "start" => {
+                                if expected == 0 {
+                                    i = 0;
+                                    bytes = 0;
+                                    start = std::time::Instant::now();
+                                }
+                                expected += 1;
                             }
-                            expected += 1;
-                        }
-                        "stop" => {
-                            expected -= 1;
-                            if expected == 0 {
-                                let elapsed = start.elapsed();
-                                let msgs_per_sec = i * 1000000 / (elapsed.as_micros() + 1);
-                                let mb_per_sec = (bytes * 1000000
-                                    / (elapsed.as_micros() as usize + 1))
-                                    / (1024 * 1024);
-                                tracing::info!("thread {thread}: {i} msgs / {bytes} in {elapsed:?} ({msgs_per_sec}/s, {mb_per_sec}MB/s)");
+                            "stop" => {
+                                expected -= 1;
+                                if expected == 0 {
+                                    let elapsed = start.elapsed();
+                                    let msgs_per_sec = i * 1000000 / (elapsed.as_micros() + 1);
+                                    let mb_per_sec = (bytes * 1000000
+                                        / (elapsed.as_micros() as usize + 1))
+                                        / (1024 * 1024);
+                                    tracing::info!("thread {thread}: {i} msgs / {bytes} in {elapsed:?} ({msgs_per_sec}/s, {mb_per_sec}MB/s)");
+                                }
                             }
+                            _ => println!("unknown msg {msg_str}"),
                         }
-                        _ => println!("unknown msg {msg_str}"),
+                    } else {
+                        i += 1;
+                        bytes += msg_content.len();
                     }
-                } else {
-                    i += 1;
-                    bytes += msg_content.len();
-                }
 
-                if i % 100000 == 0 && i > 0 {
-                    tracing::info!("thread {thread}: i={i}");
+                    if i % 100000 == 0 && i > 0 {
+                        tracing::info!("thread {thread}: i={i}");
+                    }
                 }
-            }
-            Ok(_) => {}
+                _ => {}
+            },
             Err(_) => break,
         }
     }

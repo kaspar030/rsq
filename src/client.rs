@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, sync::Arc};
 
 use anyhow::{Error, Result};
 
@@ -10,8 +10,8 @@ use monoio_codec::{FramedRead, FramedWrite};
 
 use crate::{messaging::msg::Msg, monoio_bincode::BincodeCodec};
 
-type Rx = flume::Receiver<Msg>;
-type Tx = flume::Sender<Msg>;
+type Rx = flume::Receiver<Arc<Msg>>;
+type Tx = flume::Sender<Arc<Msg>>;
 type OnshotRx = local_sync::oneshot::Receiver<()>;
 type OneshotTx = local_sync::oneshot::Sender<()>;
 
@@ -39,7 +39,7 @@ impl Rsq {
     pub async fn connect(addr: SocketAddr, rx: Tx, tx: Rx, done: OneshotTx) -> Result<(), Error> {
         use crate::messaging::msg::*;
 
-        rx.send_async(Msg::new_status(StatusMsg::Connecting))
+        rx.send_async(Arc::new(Msg::new_status(StatusMsg::Connecting)))
             .await?;
 
         let stream = TcpStream::connect(addr).await?;
@@ -48,8 +48,10 @@ impl Rsq {
         let mut msgs_in = FramedRead::new(stream_in, BincodeCodec::<Msg>::new());
         let mut msgs_out = FramedWrite::new(stream_out, BincodeCodec::<Msg>::new());
 
-        rx.send_async(Msg::new_status(crate::messaging::msg::StatusMsg::Connected))
-            .await?;
+        rx.send_async(Arc::new(Msg::new_status(
+            crate::messaging::msg::StatusMsg::Connected,
+        )))
+        .await?;
 
         monoio::select! {
             _ = async {
@@ -96,9 +98,9 @@ impl Rsq {
         // close stream so it flushes
         msgs_out.close().await?;
 
-        rx.send_async(Msg::new_status(
+        rx.send_async(Arc::new(Msg::new_status(
             crate::messaging::msg::StatusMsg::Disconnected,
-        ))
+        )))
         .await?;
 
         done.send(()).unwrap();
