@@ -12,7 +12,9 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use flume::Receiver;
-use monoio::io::{AsyncWriteRent, AsyncWriteRentExt, OwnedReadHalf, OwnedWriteHalf, Splitable};
+use monoio::io::{
+    AsyncWriteRent, AsyncWriteRentExt, BufWriter, OwnedReadHalf, OwnedWriteHalf, Splitable,
+};
 use monoio::net::{TcpListener, TcpStream};
 use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter};
 
@@ -25,11 +27,8 @@ use monoio_codec::FramedWrite;
 use rsq::monoio_bincode::BincodeCodec;
 use rsq::msg_stream::FrameDecoder;
 
-// #[global_allocator]
-// static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
-#[cfg(feature = "dhat-heap")]
 #[global_allocator]
-static ALLOC: dhat::Alloc = dhat::Alloc;
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 static OPEN_CONNECTIONS: AtomicU64 = AtomicU64::new(0);
 
@@ -309,10 +308,11 @@ async fn from_client(
 
 async fn to_client(
     rx: Receiver<Bytes>,
-    mut writer: OwnedWriteHalf<TcpStream>,
+    writer: OwnedWriteHalf<TcpStream>,
 ) -> Result<(), anyhow::Error> {
     // A message was received for the peer. Send it to the framed TCP
     // stream.
+    let mut writer = BufWriter::new(writer);
     loop {
         match rx.recv_async().await {
             Ok(payload) => {
