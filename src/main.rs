@@ -4,6 +4,7 @@
 use argh::FromArgs;
 use bytes::Bytes;
 use fdlimit::{raise_fd_limit, Outcome};
+use futures::sink::Buffer;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::error::Error;
@@ -255,12 +256,6 @@ async fn from_client(
     loop {
         match msgs_in.next().await {
             Some(Ok(bytes)) => {
-                // tracing::info!(
-                //     "4. from_client: len:{} cap:{}",
-                //     bytes.len(),
-                //     bytes.capacity()
-                // );
-                //tracing::info!("header_size:{:?}", header_size);
                 // Deserialize message header
                 let msg_slice = &bytes[4..];
                 let (msg, _hdr_len) = bincode::decode_from_slice_with_context::<bool, Msg, _>(
@@ -308,11 +303,11 @@ async fn from_client(
 
 async fn to_client(
     rx: Receiver<Bytes>,
-    writer: OwnedWriteHalf<TcpStream>,
+    mut writer: OwnedWriteHalf<TcpStream>,
 ) -> Result<(), anyhow::Error> {
     // A message was received for the peer. Send it to the framed TCP
     // stream.
-    let mut writer = BufWriter::new(writer);
+    let mut writer = BufWriter::with_capacity(8 * 1024, writer);
     loop {
         match rx.recv_async().await {
             Ok(payload) => {

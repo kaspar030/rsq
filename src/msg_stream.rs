@@ -2,7 +2,7 @@ use std::{convert::TryInto, io::ErrorKind};
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use monoio::{
-    buf::{IoBufMut, SliceMut},
+    buf::{IoBuf, IoBufMut, SliceMut},
     io::{AsyncBufRead, AsyncReadRent, AsyncReadRentExt, BufReader},
     BufResult,
 };
@@ -43,7 +43,7 @@ impl<IO> FrameDecoder<IO> {
     where
         IO: AsyncReadRent,
     {
-        let mut buf = BytesMut::with_capacity(128);
+        let mut buf = BytesMut::with_capacity(1024);
         let (size, nread) = {
             let size: u32;
             let nread: usize;
@@ -52,7 +52,7 @@ impl<IO> FrameDecoder<IO> {
                 size = u32::from_be_bytes(buf_content[0..4].try_into().unwrap());
                 nread = 0;
             } else {
-                let (res, buf_back) = self.read_exact_n(buf, 4).await;
+                let (res, buf_back) = self.read_exact_n(buf, 0, 4).await;
                 buf = buf_back;
                 nread = match res {
                     Ok(0) => return None,
@@ -76,11 +76,11 @@ impl<IO> FrameDecoder<IO> {
         //     "buf len:{} whole_frame_size={whole_frame_size} to_read={to_read}",
         //     buf.len()
         // );
-        let res = {
-            let rest = buf.split_off(nread);
-            let (res, rest) = self.read_exact_n(rest, to_read).await;
-            buf.unsplit(rest);
-            res
+        let (res, buf) = {
+            let slice = buf.slice_mut(nread..whole_frame_size as usize);
+            // tracing::info!("begin={} end={}", slice.begin(), slice.end());
+            let (res, slice) = self.io.read_exact(slice).await;
+            (res, slice.into_inner())
         };
 
         let nread = match res {
@@ -89,6 +89,7 @@ impl<IO> FrameDecoder<IO> {
             Err(e) => return Some(Err(e)),
             Ok(n) => n,
         } + nread;
+        // tracing::info!("buf nread={nread} init={}", buf.bytes_init());
 
         Some(Ok(buf))
     }
@@ -96,12 +97,13 @@ impl<IO> FrameDecoder<IO> {
     async fn read_exact_n<T: IoBufMut + 'static>(
         &mut self,
         mut buf: T,
+        start: usize,
         len: usize,
     ) -> BufResult<usize, T>
     where
         IO: AsyncReadRent,
     {
-        let mut read = 0;
+        let mut read = start;
 
         while read < len {
             let buf_slice = unsafe { SliceMut::new_unchecked(buf, read, len) };

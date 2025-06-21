@@ -44,3 +44,6 @@ tracing-subscriber = { version = "0.3.19", features = [
 
 [profile.release]
 lto = true
+
+[patch.crates-io]
+monoio = { path = "/home/kaspar/src/monoio/monoio" }
