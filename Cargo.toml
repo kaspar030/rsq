@@ -11,12 +11,12 @@ anyhow = "1.0.98"
 argh = "0.1.13"
 bincode = { version = "2.0.1", features = ["serde"] }
 bytes = { version = "1", features = ["serde"] }
-clap = { version = "4.5.39", features = ["env", "cargo"] }
+clap = { version = "4.5.40", features = ["env", "cargo"] }
 fdlimit = "0.3.0"
 flume = "0.11.1"
 futures = "0.3.31"
 local-sync = "0.1.1"
-mimalloc = { version = "0.1.46", default-features = false }
+mimalloc = { version = "0.1.47", default-features = false }
 monoio = { version = "0.2.4", default-features = false, features = [
   "async-cancel",
   "bytes",
