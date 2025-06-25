@@ -42,8 +42,16 @@ impl Rsq {
         rx.send_async(Arc::new(Msg::new_status(StatusMsg::Connecting)))
             .await?;
 
-        let stream = TcpStream::connect(addr).await?;
+        let stream = match TcpStream::connect(addr).await {
+            Ok(stream) => stream,
+            Err(e) => {
+                tracing::warn!("connect error: {e}");
+                return Err(e.into());
+            }
+        };
+
         stream.set_nodelay(true)?;
+
         let (stream_in, stream_out) = stream.into_split();
         let mut msgs_in = FramedRead::new(stream_in, BincodeCodec::<Msg>::new());
         let mut msgs_out = FramedWrite::new(stream_out, BincodeCodec::<Msg>::new());

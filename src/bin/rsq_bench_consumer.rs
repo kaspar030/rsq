@@ -1,7 +1,6 @@
 use std::{net::SocketAddr, sync::Arc};
 
 use rsq::client::Rsq;
-use rsq::messaging::channel::ChannelId;
 use rsq::messaging::msg::Msg;
 
 use argh::FromArgs;
@@ -14,9 +13,9 @@ struct Args {
     #[argh(option, default = "1")]
     threads: usize,
 
-    /// channel_id
+    /// channel_name
     #[argh(option, default = "String::from(\"test_channel\")")]
-    channel_id: String,
+    channel_name: String,
 }
 
 fn main() -> std::io::Result<()> {
@@ -57,14 +56,14 @@ async fn consumer(thread: usize, args: Args) {
     let addr = "127.0.0.1:6142".to_string();
     let addr = addr.parse::<SocketAddr>().unwrap();
 
-    let channel_id = ChannelId(args.channel_id.replace("{thread}", &format!("{thread}")));
+    let channel_name = args.channel_name.replace("{thread}", &format!("{thread}"));
 
     tracing::info!("thread {thread}: connecting...");
 
     let rsq = Rsq::new(&addr).await;
 
     rsq.tx
-        .send_async(Arc::new(Msg::channel_join(channel_id)))
+        .send_async(Arc::new(Msg::channel_join(channel_name)))
         .await
         .unwrap();
 

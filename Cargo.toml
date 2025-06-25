@@ -34,7 +34,7 @@ monoio = { version = "0.2.4", default-features = false, features = [
 ] }
 monoio-codec = "0.3.4"
 serde = { version = "1.0.219", features = ["derive"] }
-slotmap = "1.0.7"
+slotmap = { version = "1.0.7", features = ["serde"] }
 thiserror = "2.0.12"
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = [

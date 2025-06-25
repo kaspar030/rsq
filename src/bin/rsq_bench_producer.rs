@@ -6,12 +6,13 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use anyhow::anyhow;
 use argh::FromArgs;
 use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter};
 
 use rsq::client::Rsq;
 use rsq::messaging::channel::ChannelId;
-use rsq::messaging::msg::Msg;
+use rsq::messaging::msg::{Msg, StatusMsg};
 use rsq::messaging::peer::PeerId;
 
 /// rsq benchmark producer
@@ -29,9 +30,9 @@ struct Args {
     #[argh(option, default = "10_000_000")]
     msg_count: usize,
 
-    /// channel_id
+    /// channel_name
     #[argh(option, default = "String::from(\"test_channel\")")]
-    channel_id: String,
+    channel_name: String,
 }
 
 fn main() -> std::io::Result<()> {
@@ -82,11 +83,36 @@ async fn producer(thread: usize, args: Args) -> Result<Stats, Box<dyn Error>> {
     let addr = "127.0.0.1:6142".to_string();
     let addr = addr.parse::<SocketAddr>().unwrap();
 
-    let channel_id = ChannelId(args.channel_id.replace("{thread}", &format!("{thread}")));
+    let channel_name = args.channel_name.replace("{thread}", &format!("{thread}"));
 
     tracing::info!("thread {thread}: connecting...");
 
     let rsq = Rsq::new(&addr).await;
+
+    let channel_id = loop {
+        let msg = rsq.rx.recv_async().await?;
+        match &*msg {
+            Msg::StatusMsg(StatusMsg::Connecting) => {}
+            Msg::StatusMsg(StatusMsg::Connected) => {
+                tracing::info!("thread {thread}: connected. creating / getting channel");
+                rsq.tx
+                    .send_async(Arc::new(Msg::ControlMsg(
+                        rsq::messaging::msg::ControlMsg::ChannelCreate(channel_name.clone()),
+                    )))
+                    .await?;
+                continue;
+            }
+            Msg::StatusMsg(StatusMsg::Disconnected) => {
+                tracing::info!("thread {thread}: connection failed.");
+                return Err(anyhow!("cannot connect").into());
+            }
+            Msg::StatusMsg(StatusMsg::ChannelId(_name, channel_id)) => break *channel_id,
+            _ => {
+                tracing::info!("msg: {msg:?}");
+                continue;
+            }
+        }
+    };
 
     let msg = Arc::new(Msg::new_channel_msg(
         PeerId::new("sender"),

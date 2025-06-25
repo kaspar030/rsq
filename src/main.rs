@@ -4,7 +4,6 @@
 use argh::FromArgs;
 use bytes::Bytes;
 use fdlimit::{raise_fd_limit, Outcome};
-use futures::sink::Buffer;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::error::Error;
@@ -24,8 +23,7 @@ use rsq::messaging::peer::{Peer, PeerHandle, PeerId};
 use rsq::messaging::router::Router;
 
 // Codec
-use monoio_codec::FramedWrite;
-use rsq::monoio_bincode::BincodeCodec;
+use rsq::monoio_bincode::Framed;
 use rsq::msg_stream::FrameDecoder;
 
 #[global_allocator]
@@ -278,11 +276,24 @@ async fn from_client(
                     Msg::ControlMsg(controlmsg) => match controlmsg {
                         ControlMsg::ChannelJoin(channel) => {
                             let mut state = state.borrow_mut();
-                            state.router.attach(&channel, &peer)?;
+                            let channel_id = state.router.channel_get_or_add(channel);
+                            state.router.attach(channel_id, &peer)?;
                         }
                         ControlMsg::ChannelLeave(channel) => {
                             let mut state = state.borrow_mut();
-                            state.router.detach(&channel, &peer)?;
+                            state.router.detach(channel, &peer)?;
+                        }
+                        ControlMsg::ChannelCreate(name) => {
+                            let mut state = state.borrow_mut();
+                            let channel_id = state.router.channel_get_or_add(name.clone());
+                            peer.get_sink()
+                                .send_async(
+                                    Msg::StatusMsg(rsq::messaging::msg::StatusMsg::ChannelId(
+                                        name, channel_id,
+                                    ))
+                                    .framed(),
+                                )
+                                .await?;
                         }
                     },
                     _ => {
@@ -303,7 +314,7 @@ async fn from_client(
 
 async fn to_client(
     rx: Receiver<Bytes>,
-    mut writer: OwnedWriteHalf<TcpStream>,
+    writer: OwnedWriteHalf<TcpStream>,
 ) -> Result<(), anyhow::Error> {
     // A message was received for the peer. Send it to the framed TCP
     // stream.

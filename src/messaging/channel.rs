@@ -1,31 +1,65 @@
-use bincode::{Decode, Encode};
+use bincode::{BorrowDecode, Decode, Encode};
 use bytes::Bytes;
-use serde::{Deserialize, Serialize};
+use slotmap::{new_key_type, KeyData};
 use std::collections::HashMap;
-use std::sync::Arc;
 
-use super::msg::Msg;
 use super::peer::{Peer, PeerHandle, PeerId};
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Encode, Decode)]
-pub struct ChannelId(pub String);
+new_key_type! {
+    pub struct ChannelId;
+}
+
+impl Encode for ChannelId {
+    fn encode<E: bincode::enc::Encoder>(
+        &self,
+        encoder: &mut E,
+    ) -> Result<(), bincode::error::EncodeError> {
+        Encode::encode(&self.0.as_ffi(), encoder)
+    }
+}
+
+impl<Context> Decode<Context> for ChannelId {
+    fn decode<D: bincode::de::Decoder<Context = Context>>(
+        decoder: &mut D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        Ok(ChannelId(KeyData::from_ffi(u64::decode(decoder)?)))
+    }
+}
+
+impl<'de, Context> BorrowDecode<'de, Context> for ChannelId {
+    fn borrow_decode<D: bincode::de::BorrowDecoder<'de, Context = Context>>(
+        decoder: &mut D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        Ok(ChannelId(KeyData::from_ffi(u64::borrow_decode(decoder)?)))
+    }
+}
 
 #[derive(Debug)]
 pub struct Channel {
     id: ChannelId,
+    name: String,
     subscriptions: HashMap<PeerId, PeerHandle>,
 }
 
 impl Channel {
-    pub fn new(id: ChannelId) -> Channel {
+    pub fn new(name: String, id: ChannelId) -> Channel {
         Channel {
             id,
+            name,
             subscriptions: HashMap::new(),
         }
     }
 
-    pub fn get_id(&self) -> &ChannelId {
-        &self.id
+    pub fn get_id(&self) -> ChannelId {
+        self.id
+    }
+
+    pub fn get_name(&self) -> &String {
+        &self.name
+    }
+
+    pub(crate) fn set_id(&mut self, id: ChannelId) {
+        self.id = id
     }
 
     pub fn subscribe(&mut self, peer: &dyn Peer) {

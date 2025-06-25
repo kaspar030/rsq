@@ -2,7 +2,7 @@ use super::channel::ChannelId;
 use super::peer::PeerId;
 use super::util::hash;
 
-use bincode::{BorrowDecode, Decode, Encode};
+use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
 #[derive(PartialEq, Clone, Debug, Eq, Hash, Serialize, Deserialize, Encode)]
@@ -37,57 +37,6 @@ impl Decode<bool> for Msg {
         }
     }
 }
-
-// impl ::bincode::Decode<__Context> for Msg {
-//     fn decode<__D: ::bincode::de::Decoder<Context = __Context>>(
-//         decoder: &mut __D,
-//     ) -> core::result::Result<Self, ::bincode::error::DecodeError> {
-//         let variant_index = <u32 as ::bincode::Decode<__D::Context>>::decode(decoder)?;
-//         match variant_index {
-//             0u32 => core::result::Result::Ok(Self::ChannelMsg {
-//                 0: ::bincode::Decode::<__D::Context>::decode(decoder)?,
-//             }),
-//             1u32 => core::result::Result::Ok(Self::ControlMsg {
-//                 0: ::bincode::Decode::<__D::Context>::decode(decoder)?,
-//             }),
-//             2u32 => core::result::Result::Ok(Self::StatusMsg {
-//                 0: ::bincode::Decode::<__D::Context>::decode(decoder)?,
-//             }),
-//             variant => {
-//                 core::result::Result::Err(::bincode::error::DecodeError::UnexpectedVariant {
-//                     found: variant,
-//                     type_name: "Msg",
-//                     allowed: &::bincode::error::AllowedEnumVariants::Range { min: 0, max: 2 },
-//                 })
-//             }
-//         }
-//     }
-// }
-// impl<'__de, __Context> ::bincode::BorrowDecode<'__de, __Context> for Msg {
-//     fn borrow_decode<__D: ::bincode::de::BorrowDecoder<'__de, Context = __Context>>(
-//         decoder: &mut __D,
-//     ) -> core::result::Result<Self, ::bincode::error::DecodeError> {
-//         let variant_index = <u32 as ::bincode::Decode<__D::Context>>::decode(decoder)?;
-//         match variant_index {
-//             0u32 => core::result::Result::Ok(Self::ChannelMsg {
-//                 0: ::bincode::BorrowDecode::<__D::Context>::borrow_decode(decoder)?,
-//             }),
-//             1u32 => core::result::Result::Ok(Self::ControlMsg {
-//                 0: ::bincode::BorrowDecode::<__D::Context>::borrow_decode(decoder)?,
-//             }),
-//             2u32 => core::result::Result::Ok(Self::StatusMsg {
-//                 0: ::bincode::BorrowDecode::<__D::Context>::borrow_decode(decoder)?,
-//             }),
-//             variant => {
-//                 core::result::Result::Err(::bincode::error::DecodeError::UnexpectedVariant {
-//                     found: variant,
-//                     type_name: "Msg",
-//                     allowed: &::bincode::error::AllowedEnumVariants::Range { min: 0, max: 2 },
-//                 })
-//             }
-//         }
-//     }
-// }
 
 #[derive(PartialEq, Eq, Hash, Clone, Debug, Serialize, Deserialize, Encode)]
 pub struct ChannelMsg {
@@ -126,7 +75,8 @@ pub struct ChannelMsgHdr {
 
 #[derive(PartialEq, Eq, Hash, Clone, Debug, Serialize, Deserialize, Encode, Decode)]
 pub enum ControlMsg {
-    ChannelJoin(ChannelId),
+    ChannelJoin(String),
+    ChannelCreate(String),
     ChannelLeave(ChannelId),
 }
 
@@ -135,6 +85,7 @@ pub enum StatusMsg {
     Connecting,
     Connected,
     Disconnected,
+    ChannelId(String, ChannelId),
 }
 
 impl ChannelMsg {
@@ -149,8 +100,8 @@ impl ChannelMsg {
     pub fn sender(&self) -> &PeerId {
         &self.sender
     }
-    pub fn channel(&self) -> &ChannelId {
-        &self.channel
+    pub fn channel(&self) -> ChannelId {
+        self.channel
     }
     pub fn content(&self) -> &Vec<u8> {
         &self.content
@@ -162,8 +113,8 @@ impl Msg {
         Self::ChannelMsg(ChannelMsg::new(sender, channel, content))
     }
 
-    pub fn channel_join(channel_id: ChannelId) -> Self {
-        Self::ControlMsg(ControlMsg::ChannelJoin(channel_id))
+    pub fn channel_join(channel_name: String) -> Self {
+        Self::ControlMsg(ControlMsg::ChannelJoin(channel_name))
     }
 
     pub fn channel_leave(channel_id: ChannelId) -> Self {

@@ -1,5 +1,5 @@
 use bincode::{Decode, Encode};
-use bytes::{BufMut, BytesMut};
+use bytes::{BufMut, Bytes, BytesMut};
 use monoio_codec::{length_delimited::LengthDelimitedCodec, Decoded, Decoder, Encoder};
 use std::{io, marker::PhantomData, sync::Arc};
 
@@ -84,5 +84,26 @@ impl<T: Encode> Encoder<Arc<T>> for BincodeCodec<T> {
             .expect("encoding went well");
 
         Ok(())
+    }
+}
+
+pub trait Framed {
+    fn framed(&self) -> Bytes;
+}
+
+impl<T: Encode> Framed for T {
+    fn framed(&self) -> Bytes {
+        let mut counter = BincodeCountingWriter { written: 0 };
+        bincode::encode_into_writer(self, &mut counter, bincode::config::standard())
+            .expect("encoding went well");
+
+        let mut dst = BytesMut::with_capacity(counter.written + 4);
+        dst.put_u32(counter.written as u32);
+
+        let writer = ByteMutBincodeWriter { bytes: &mut dst };
+        bincode::encode_into_writer(self, writer, bincode::config::standard())
+            .expect("encoding went well");
+
+        dst.freeze()
     }
 }
