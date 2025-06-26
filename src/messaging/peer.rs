@@ -2,7 +2,8 @@ use bincode::{Decode, Encode};
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
-pub type PeerHandle = flume::Sender<Bytes>;
+pub type PeerTx = flume::Sender<Bytes>;
+pub type PeerRx = flume::Receiver<Bytes>;
 
 #[derive(PartialEq, Eq, Clone, Debug, Hash, Serialize, Deserialize, Encode, Decode)]
 pub struct PeerId {
@@ -17,7 +18,7 @@ impl PeerId {
 
 pub trait Peer {
     fn get_id(&self) -> &PeerId;
-    fn get_sink(&self) -> &PeerHandle;
+    fn get_sink(&self) -> &PeerTx;
 }
 
 unsafe impl Send for PeerId {}

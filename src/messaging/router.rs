@@ -1,5 +1,5 @@
 use super::channel::{Channel, ChannelId};
-use super::peer::{Peer, PeerHandle, PeerId};
+use super::peer::{Peer, PeerId, PeerTx};
 use std::collections::HashMap;
 
 use anyhow::Error;
@@ -10,7 +10,7 @@ use super::errors::TxError;
 
 #[derive(Debug, Default)]
 pub struct Router {
-    peers: HashMap<PeerId, PeerHandle>,
+    peers: HashMap<PeerId, PeerTx>,
     channels: SlotMap<ChannelId, Channel>,
     channel_names: HashMap<String, ChannelId>,
 }

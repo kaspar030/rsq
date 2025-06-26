@@ -19,7 +19,7 @@ use monoio::net::{TcpListener, TcpStream};
 use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter};
 
 use rsq::messaging::msg::{ControlMsg, Msg};
-use rsq::messaging::peer::{Peer, PeerHandle, PeerId};
+use rsq::messaging::peer::{Peer, PeerId, PeerTx};
 use rsq::messaging::router::Router;
 
 // Codec
@@ -138,9 +138,6 @@ async fn server(args: Args) -> Result<(), Box<dyn Error>> {
     }
 }
 
-/// Shorthand for the transmit half of the message channel.
-type PeerTx = flume::Sender<Bytes>;
-
 /// Data that is shared between all client connections
 struct Shared {
     connections: HashMap<SocketAddr, PeerTx>,
@@ -185,7 +182,7 @@ impl Peer for ConnectionPeer {
         &self.peer_id
     }
 
-    fn get_sink(&self) -> &PeerHandle {
+    fn get_sink(&self) -> &PeerTx {
         &self.tx
     }
 }

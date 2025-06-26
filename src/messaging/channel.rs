@@ -3,7 +3,7 @@ use bytes::Bytes;
 use slotmap::{new_key_type, KeyData};
 use std::collections::HashMap;
 
-use super::peer::{Peer, PeerHandle, PeerId};
+use super::peer::{Peer, PeerId, PeerTx};
 
 new_key_type! {
     pub struct ChannelId;
@@ -38,7 +38,7 @@ impl<'de, Context> BorrowDecode<'de, Context> for ChannelId {
 pub struct Channel {
     id: ChannelId,
     name: String,
-    subscriptions: HashMap<PeerId, PeerHandle>,
+    subscriptions: HashMap<PeerId, PeerTx>,
 }
 
 impl Channel {
